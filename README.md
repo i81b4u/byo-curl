@@ -99,7 +99,7 @@ Run curl from the image:
 docker run --rm byo-curl:latest --version
 ```
 
-Run an MLKEM test on www.google.com:
+Run a MLKEM test on www.google.com:
 
 ```bash
 docker run --rm byo-curl:latest \
@@ -107,7 +107,7 @@ docker run --rm byo-curl:latest \
   https://www.google.com
 ```
 
-Run an HTTP/3 and MLKEM test on www.cloudflare.com:
+Run a HTTP/3 and MLKEM test on www.cloudflare.com:
 
 ```bash
 docker run --rm byo-curl:latest \
