@@ -103,7 +103,7 @@ Run an HTTP/3 + MLKEM test, and yes, Google supports MLKEM1024:
 
 ```bash
 docker run --rm byo-curl:latest \
-  --silent --head --tlsv1.3 --curves MLKEM1024 --http3 \
+  --silent --head --tlsv1.3 --curves MLKEM1024 \
   https://www.google.com
 ```
 
