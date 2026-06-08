@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!.dockerignore
+!curl-build/
+!curl-build/prefix/
+!curl-build/prefix/**
