@@ -99,7 +99,7 @@ Run curl from the image:
 docker run --rm byo-curl:latest --version
 ```
 
-Run an HTTP/3 + MLKEM test, and yes, Google supports MLKEM1024:
+Run an MLKEM test, and yes, Google supports MLKEM1024:
 
 ```bash
 docker run --rm byo-curl:latest \
