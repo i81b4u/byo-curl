@@ -99,12 +99,20 @@ Run curl from the image:
 docker run --rm byo-curl:latest --version
 ```
 
-Run an MLKEM test, and yes, Google supports MLKEM1024:
+Run an MLKEM test on www.google.com:
 
 ```bash
 docker run --rm byo-curl:latest \
   --silent --head --tlsv1.3 --curves MLKEM1024 \
   https://www.google.com
+```
+
+Run an HTTP/3 and MLKEM test on www.cloudflare.com:
+
+```bash
+docker run --rm byo-curl:latest \
+  --silent --head --tlsv1.3 --curves X25519MLKEM768 --http3 \
+  https://www.cloudflare.com
 ```
 
 Start a shell inside the runtime image:
