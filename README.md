@@ -1,11 +1,11 @@
-# BYO curl build with OpenSSL 4 and HTTP/3
+# BYO curl build with OpenSSL 4, HTTP/2, and HTTP/3
 
 This directory contains scripts to build a custom curl from pinned upstream git
 tags, install it into a local prefix, and optionally package that prefix into a
 Docker runtime image.
 
-The resulting curl is built with OpenSSL 4, HTTP/3 via ngtcp2/nghttp3, zlib,
-Brotli, zstd, libidn2, libpsl, libssh, and OpenLDAP.
+The resulting curl is built with OpenSSL 4, HTTP/2 via nghttp2, HTTP/3 via
+ngtcp2/nghttp3, zlib, Brotli, zstd, libidn2, libpsl, libssh, and OpenLDAP.
 
 ## Files
 
@@ -107,7 +107,15 @@ docker run --rm byo-curl:latest \
   https://www.google.com
 ```
 
-Run a HTTP/3 and MLKEM test on www.cloudflare.com:
+Run an HTTP/2 test on www.cloudflare.com:
+
+```bash
+docker run --rm byo-curl:latest \
+  --silent --head --http2 \
+  https://www.cloudflare.com
+```
+
+Run an HTTP/3 and MLKEM test on www.cloudflare.com:
 
 ```bash
 docker run --rm byo-curl:latest \
@@ -145,6 +153,6 @@ building librtmp would not make this curl support RTMP.
 A successful build should report features similar to:
 
 ```text
-curl 8.20.0-i81b4u ... OpenSSL/4.0.0 ... ngtcp2/1.23.0 nghttp3/1.16.0 ...
-Features: alt-svc AsynchDNS brotli HSTS HTTP3 HTTPS-proxy IDN IPv6 Largefile libz PSL SSL threadsafe TLS-SRP UnixSockets zstd
+curl 8.20.0-i81b4u ... OpenSSL/4.0.0 ... nghttp2/1.69.0 ngtcp2/1.23.0 nghttp3/1.16.0 ...
+Features: alt-svc AsynchDNS brotli HSTS HTTP2 HTTP3 HTTPS-proxy IDN IPv6 Largefile libz PSL SSL threadsafe TLS-SRP UnixSockets zstd
 ```

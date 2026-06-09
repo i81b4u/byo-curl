@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 OPENSSL_VERSION="${OPENSSL_VERSION:-4.0.0}"
+NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.69.0}"
 NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.16.0}"
 NGTCP2_VERSION="${NGTCP2_VERSION:-v1.23.0}"
 CURL_VERSION="${CURL_VERSION:-curl-8_20_0}"
@@ -85,7 +86,7 @@ run_autogen_if_needed() {
   fi
 }
 
-# Common CMake builder used by Brotli, nghttp3, and libssh.
+# Common CMake builder used by Brotli, nghttp2/nghttp3, and libssh.
 cmake_build() {
   local name="$1"
   shift
@@ -146,6 +147,7 @@ prepare() {
 # system or test-disabled library build expects bundled helper files.
 fetch_sources() {
   clone_repo openssl "openssl-$OPENSSL_VERSION" https://github.com/openssl/openssl
+  clone_repo nghttp2 "$NGHTTP2_VERSION" https://github.com/nghttp2/nghttp2.git
   clone_repo nghttp3 "$NGHTTP3_VERSION" https://github.com/ngtcp2/nghttp3 yes
   clone_repo ngtcp2 "$NGTCP2_VERSION" https://github.com/ngtcp2/ngtcp2 yes
   clone_repo zlib "$ZLIB_VERSION" https://github.com/madler/zlib.git
@@ -298,6 +300,14 @@ build_libpsl() {
     --with-libidn2
 }
 
+build_nghttp2() {
+  log "Building nghttp2 $NGHTTP2_VERSION"
+  cmake_build nghttp2 \
+    -DBUILD_SHARED_LIBS=ON \
+    -DENABLE_LIB_ONLY=ON \
+    -DENABLE_DOC=OFF
+}
+
 build_nghttp3() {
   log "Building nghttp3 $NGHTTP3_VERSION"
   cmake_build nghttp3 \
@@ -361,6 +371,7 @@ build_curl() {
   log "Building curl $CURL_VERSION"
   autotools_build curl \
     --with-openssl="$PREFIX" \
+    --with-nghttp2="$PREFIX" \
     --with-nghttp3="$PREFIX" \
     --with-ngtcp2="$PREFIX" \
     --with-zlib="$PREFIX" \
@@ -391,6 +402,7 @@ main() {
   build_libunistring
   build_libidn2
   build_libpsl
+  build_nghttp2
   build_nghttp3
   build_ngtcp2
   build_libssh
