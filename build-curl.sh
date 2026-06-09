@@ -131,7 +131,7 @@ autotools_build() {
 require_tools() {
   local commands=(
     autoconf automake autoreconf cmake gengetopt git gperf libtoolize make
-    date perl pkg-config sed
+    date perl pkg-config sed autopoint
   )
   for cmd in "${commands[@]}"; do
     need_cmd "$cmd"
