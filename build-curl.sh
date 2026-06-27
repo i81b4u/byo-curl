@@ -380,6 +380,7 @@ build_curl() {
     --with-libidn2="$PREFIX" \
     --with-libpsl="$PREFIX" \
     --with-libssh="$PREFIX" \
+    --enable-ech \
     --enable-ldap \
     --enable-ldaps
 }

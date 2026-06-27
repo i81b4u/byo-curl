@@ -4,8 +4,9 @@ This directory contains scripts to build a custom curl from pinned upstream git
 tags, install it into a local prefix, and optionally package that prefix into a
 Docker runtime image.
 
-The resulting curl is built with OpenSSL 4, HTTP/2 via nghttp2, HTTP/3 via
-ngtcp2/nghttp3, zlib, Brotli, zstd, libidn2, libpsl, libssh, and OpenLDAP.
+The resulting curl is built with OpenSSL 4, ECH/HTTPS RR, HTTP/2 via nghttp2,
+HTTP/3 via ngtcp2/nghttp3, zlib, Brotli, zstd, libidn2, libpsl, libssh, and
+OpenLDAP.
 
 ## Files
 
@@ -57,6 +58,34 @@ Check it with:
 
 ```bash
 ./curl-build/prefix/bin/curl --version
+```
+
+The `Features:` line should include `ECH` and `HTTPSRR`.
+
+## Test ECH
+
+Cloudflare's trace endpoint reports whether SNI was encrypted. This test uses
+DNS-over-HTTPS so curl can retrieve the HTTPS resource record that carries the
+ECHConfigList:
+
+```bash
+./curl-build/prefix/bin/curl -v \
+  --tlsv1.3 \
+  --ech hard \
+  --doh-url https://cloudflare-dns.com/dns-query \
+  https://crypto.cloudflare.com/cdn-cgi/trace
+```
+
+A successful run includes verbose output similar to:
+
+```text
+ECH: result: status is succeeded, inner is crypto.cloudflare.com, outer is cloudflare-ech.com
+```
+
+The response body should include:
+
+```text
+sni=encrypted
 ```
 
 ## Customization
@@ -123,6 +152,15 @@ docker run --rm byo-curl:latest \
   https://www.cloudflare.com
 ```
 
+Run an ECH test on crypto.cloudflare.com:
+
+```bash
+docker run --rm byo-curl:latest \
+  --verbose --tlsv1.3 --ech hard \
+  --doh-url https://cloudflare-dns.com/dns-query \
+  https://crypto.cloudflare.com/cdn-cgi/trace
+```
+
 Start a shell inside the runtime image:
 
 ```bash
@@ -154,5 +192,5 @@ A successful build should report features similar to:
 
 ```text
 curl 8.21.0-i81b4u ... OpenSSL/4.0.1 ... nghttp2/1.69.0 ngtcp2/1.23.0 nghttp3/1.17.0 ...
-Features: alt-svc AsynchDNS brotli HSTS HTTP2 HTTP3 HTTPS-proxy IDN IPv6 Largefile libz PSL SSL threadsafe TLS-SRP UnixSockets zstd
+Features: alt-svc AsynchDNS brotli ECH HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Largefile libz PSL SSL threadsafe TLS-SRP UnixSockets zstd
 ```
