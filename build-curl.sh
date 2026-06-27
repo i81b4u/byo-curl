@@ -3,16 +3,16 @@ set -Eeuo pipefail
 
 OPENSSL_VERSION="${OPENSSL_VERSION:-4.0.1}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.69.0}"
-NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.16.0}"
+NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.17.0}"
 NGTCP2_VERSION="${NGTCP2_VERSION:-v1.23.0}"
-CURL_VERSION="${CURL_VERSION:-curl-8_20_0}"
+CURL_VERSION="${CURL_VERSION:-curl-8_21_0}"
 ZLIB_VERSION="${ZLIB_VERSION:-v1.3.2}"
 BROTLI_VERSION="${BROTLI_VERSION:-v1.2.0}"
 ZSTD_VERSION="${ZSTD_VERSION:-v1.5.7}"
 LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-v1.4.2}"
 LIBIDN2_VERSION="${LIBIDN2_VERSION:-v2.3.8}"
-LIBPSL_VERSION="${LIBPSL_VERSION:-0.21.5}"
-LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.11.4}"
+LIBPSL_VERSION="${LIBPSL_VERSION:-0.22.0}"
+LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.12.0}"
 OPENLDAP_VERSION="${OPENLDAP_VERSION:-OPENLDAP_REL_ENG_2_6_13}"
 CURL_BUILD_SUFFIX="${CURL_BUILD_SUFFIX:-i81b4u}"
 CURL_RELEASE_DATE="${CURL_RELEASE_DATE:-$(date +%Y-%m-%d)}"
@@ -146,19 +146,19 @@ prepare() {
 # Fetch all sources from git. Some projects need submodules because their build
 # system or test-disabled library build expects bundled helper files.
 fetch_sources() {
-  clone_repo openssl "openssl-$OPENSSL_VERSION" https://github.com/openssl/openssl
+  clone_repo openssl "openssl-$OPENSSL_VERSION" https://github.com/openssl/openssl.git
   clone_repo nghttp2 "$NGHTTP2_VERSION" https://github.com/nghttp2/nghttp2.git
-  clone_repo nghttp3 "$NGHTTP3_VERSION" https://github.com/ngtcp2/nghttp3 yes
-  clone_repo ngtcp2 "$NGTCP2_VERSION" https://github.com/ngtcp2/ngtcp2 yes
+  clone_repo nghttp3 "$NGHTTP3_VERSION" https://github.com/ngtcp2/nghttp3.git yes
+  clone_repo ngtcp2 "$NGTCP2_VERSION" https://github.com/ngtcp2/ngtcp2.git yes
   clone_repo zlib "$ZLIB_VERSION" https://github.com/madler/zlib.git
   clone_repo brotli "$BROTLI_VERSION" https://github.com/google/brotli.git
   clone_repo zstd "$ZSTD_VERSION" https://github.com/facebook/zstd.git
-  clone_repo libunistring "$LIBUNISTRING_VERSION" https://git.savannah.gnu.org/git/libunistring.git
+  clone_repo libunistring "$LIBUNISTRING_VERSION" https://https.git.savannah.gnu.org/git/libunistring.git/
   clone_repo libidn2 "$LIBIDN2_VERSION" https://github.com/libidn/libidn2.git
   clone_repo libpsl "$LIBPSL_VERSION" https://github.com/rockdaboot/libpsl.git yes
   clone_repo libssh "$LIBSSH_VERSION" https://git.libssh.org/projects/libssh.git
   clone_repo openldap "$OPENLDAP_VERSION" https://github.com/openldap/openldap.git
-  clone_repo curl "$CURL_VERSION" https://github.com/curl/curl
+  clone_repo curl "$CURL_VERSION" https://github.com/curl/curl.git
 }
 
 # OpenLDAP 2.6.13 still dereferences ASN1_STRING internals in this file.
