@@ -11,6 +11,7 @@ OpenLDAP.
 ## Files
 
 - `build-curl.sh` clones and builds curl plus all pinned dependencies.
+- `test-curl.sh` runs post-build smoke tests against the built curl.
 - `build-docker-image.sh` packages the already-built prefix into a Docker image.
 - `Dockerfile` defines the runtime image used by `build-docker-image.sh`.
 - `.dockerignore` keeps the Docker context focused on `curl-build/prefix`.
@@ -24,7 +25,7 @@ sudo apt install autoconf automake autopoint bison cmake flex gettext \
   gengetopt git gperf libtool make perl pkg-config
 ```
 
-Docker is only needed for image packaging:
+Docker is only needed for image packaging and Docker-mode smoke tests:
 
 ```bash
 sudo apt install docker.io
@@ -61,6 +62,49 @@ Check it with:
 ```
 
 The `Features:` line should include `ECH` and `HTTPSRR`.
+
+## Test curl
+
+After a build, run the smoke test suite:
+
+```bash
+./test-curl.sh
+```
+
+The script checks the compiled dependency versions against `build-curl.sh`,
+enabled protocols and features, runtime library linkage, HTTP/1.1, HTTP/2,
+HTTP/3, gzip, Brotli, zstd negotiation, ECH, HSTS, Alt-Svc, and LDAPS.
+
+For local-only checks without public network requests:
+
+```bash
+SKIP_NETWORK=1 ./test-curl.sh
+```
+
+After packaging the Docker image, run the same checks against the containerized
+curl:
+
+```bash
+./test-curl.sh --docker
+```
+
+By default this tests `byo-curl:latest`. To test a specific image tag:
+
+```bash
+./test-curl.sh --docker byo-curl:8.21.0-i81b4u
+```
+
+Optional protocol checks can be enabled by providing URLs. These checks discard
+response bodies with `--output /dev/null`, so directory/listing URLs or tiny
+test files are best:
+
+```bash
+FTP_TEST_URL=ftp://example.test/path \
+SFTP_TEST_URL=sftp://user@example.test/path \
+SCP_TEST_URL=scp://user@example.test/path \
+WS_TEST_URL=wss://example.test/socket \
+./test-curl.sh
+```
 
 ## Test ECH
 
@@ -100,7 +144,7 @@ CURL_BUILD_SUFFIX=mybuild ./build-curl.sh
 WORK_DIR="$PWD/out" PREFIX="$PWD/out/prefix" ./build-curl.sh
 ```
 
-The default curl version stamp is `8.20.0-i81b4u`, and the release date defaults
+The default curl version stamp is `8.21.0-i81b4u`, and the release date defaults
 to the build date. Override both like this:
 
 ```bash
@@ -118,7 +162,7 @@ After `./build-curl.sh` has completed, build the runtime image:
 The helper tags the image with the curl version and `latest`, for example:
 
 ```text
-byo-curl:8.20.0-i81b4u
+byo-curl:8.21.0-i81b4u
 byo-curl:latest
 ```
 
@@ -191,6 +235,6 @@ building librtmp would not make this curl support RTMP.
 A successful build should report features similar to:
 
 ```text
-curl 8.21.0-i81b4u ... OpenSSL/4.0.1 ... nghttp2/1.69.0 ngtcp2/1.23.0 nghttp3/1.17.0 ...
+curl 8.21.0-i81b4u ... OpenSSL/4.0.1 ... nghttp2/1.69.0 ngtcp2/1.24.0 nghttp3/1.17.0 ...
 Features: alt-svc AsynchDNS brotli ECH HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Largefile libz PSL SSL threadsafe TLS-SRP UnixSockets zstd
 ```
