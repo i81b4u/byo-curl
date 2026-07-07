@@ -23,7 +23,7 @@ need_cmd() {
 need_cmd docker
 
 # Use curl's first --version token as a stable Docker tag, for example
-# byo-curl:8.20.0-i81b4u, and also refresh byo-curl:latest.
+# byo-curl:8.21.0-i81b4u, and also refresh byo-curl:latest.
 version="$("$CURL_BIN" --version | sed -n '1s/^curl \([^ ]*\).*/\1/p')"
 if [[ -z "$version" ]]; then
   printf 'Could not determine curl version from %s\n' "$CURL_BIN" >&2

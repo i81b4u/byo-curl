@@ -4,7 +4,7 @@ set -Eeuo pipefail
 OPENSSL_VERSION="${OPENSSL_VERSION:-4.0.1}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.69.0}"
 NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.17.0}"
-NGTCP2_VERSION="${NGTCP2_VERSION:-v1.23.0}"
+NGTCP2_VERSION="${NGTCP2_VERSION:-v1.24.0}"
 CURL_VERSION="${CURL_VERSION:-curl-8_21_0}"
 ZLIB_VERSION="${ZLIB_VERSION:-v1.3.2}"
 BROTLI_VERSION="${BROTLI_VERSION:-v1.2.0}"
@@ -179,7 +179,7 @@ patch_openldap() {
   ' "$file"
 }
 
-# The curl git tag reports itself as 8.20.0-DEV and "[unreleased]". Stamp the
+# The curl git tag reports itself as 8.21.0-DEV and "[unreleased]". Stamp the
 # local build so --version and User-Agent identify this custom binary clearly.
 patch_curl_version() {
   local header="$SRC_DIR/curl/include/curl/curlver.h"
