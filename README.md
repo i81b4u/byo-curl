@@ -25,7 +25,7 @@ sudo apt install autoconf automake autopoint bison cmake flex gettext \
   gengetopt git gperf libtool make perl pkg-config
 ```
 
-Docker is only needed for image packaging and Docker-mode smoke tests:
+Docker is only needed for image packaging:
 
 ```bash
 sudo apt install docker.io
@@ -73,7 +73,8 @@ After a build, run the smoke test suite:
 
 The script checks the compiled dependency versions against `build-curl.sh`,
 enabled protocols and features, runtime library linkage, HTTP/1.1, HTTP/2,
-HTTP/3, gzip, Brotli, zstd negotiation, ECH, HSTS, Alt-Svc, and LDAPS.
+HTTP/3, gzip, Brotli, zstd negotiation, ECH, HSTS, Alt-Svc, LDAPS, FTP, SFTP,
+SCP, and WSS.
 
 For local-only checks without public network requests:
 
@@ -81,22 +82,14 @@ For local-only checks without public network requests:
 SKIP_NETWORK=1 ./test-curl.sh
 ```
 
-After packaging the Docker image, run the same checks against the containerized
-curl:
+FTP, SFTP, SCP, and WSS default to public test endpoints:
 
-```bash
-./test-curl.sh --docker
-```
+- `ftp://demo:password@test.rebex.net/`
+- `sftp://demo:password@test.rebex.net/`
+- `scp://demo:password@test.rebex.net/readme.txt`
+- `wss://echo.websocket.org/`
 
-By default this tests `byo-curl:latest`. To test a specific image tag:
-
-```bash
-./test-curl.sh --docker byo-curl:8.21.0-i81b4u
-```
-
-Optional protocol checks can be enabled by providing URLs. These checks discard
-response bodies with `--output /dev/null`, so directory/listing URLs or tiny
-test files are best:
+Override them by providing URLs:
 
 ```bash
 FTP_TEST_URL=ftp://example.test/path \
