@@ -3,14 +3,9 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET=local
-DOCKER_IMAGE="${DOCKER_IMAGE:-byo-curl:latest}"
 CURL_BIN="${CURL_BIN:-}"
 CURL_CONFIG="${CURL_CONFIG:-}"
 PREFIX_DIR="${PREFIX_DIR:-}"
-CONTAINER_CURL_BIN="${CONTAINER_CURL_BIN:-/opt/byo-curl/bin/curl}"
-CONTAINER_CURL_CONFIG="${CONTAINER_CURL_CONFIG:-/opt/byo-curl/bin/curl-config}"
-CONTAINER_PREFIX_DIR="${CONTAINER_PREFIX_DIR:-/opt/byo-curl}"
 TIMEOUT="${TIMEOUT:-20}"
 SKIP_NETWORK="${SKIP_NETWORK:-0}"
 SKIP_LDAP="${SKIP_LDAP:-0}"
@@ -21,17 +16,13 @@ HTTP2_URL="${HTTP2_URL:-https://www.cloudflare.com/}"
 HTTP3_URL="${HTTP3_URL:-https://www.cloudflare.com/}"
 ECH_URL="${ECH_URL:-https://crypto.cloudflare.com/cdn-cgi/trace}"
 DOH_URL="${DOH_URL:-https://cloudflare-dns.com/dns-query}"
-GZIP_URL="${GZIP_URL:-https://nghttp2.org/httpbin/gzip}"
-BROTLI_URL="${BROTLI_URL:-https://nghttp2.org/httpbin/brotli}"
-HEADERS_URL="${HEADERS_URL:-https://nghttp2.org/httpbin/headers}"
+COMPRESSION_URL="${COMPRESSION_URL:-https://www.cloudflare.com/}"
 LDAPS_URL="${LDAPS_URL:-ldaps://db.debian.org/uid=joey,ou=users,dc=debian,dc=org?cn}"
 
-# Optional authenticated or environment-specific services. Set these to enable
-# additional protocol checks.
-FTP_TEST_URL="${FTP_TEST_URL:-}"
-SFTP_TEST_URL="${SFTP_TEST_URL:-}"
-SCP_TEST_URL="${SCP_TEST_URL:-}"
-WS_TEST_URL="${WS_TEST_URL:-}"
+FTP_TEST_URL="${FTP_TEST_URL:-ftp://demo:password@test.rebex.net/}"
+SFTP_TEST_URL="${SFTP_TEST_URL:-sftp://demo:password@test.rebex.net/}"
+SCP_TEST_URL="${SCP_TEST_URL:-scp://demo:password@test.rebex.net/readme.txt}"
+WS_TEST_URL="${WS_TEST_URL:-wss://echo.websocket.org/}"
 
 pass_count=0
 fail_count=0
@@ -56,14 +47,12 @@ usage() {
   cat <<'EOF'
 Usage:
   ./test-curl.sh [--local] [--curl-bin PATH] [--curl-config PATH] [--prefix PATH]
-  ./test-curl.sh --docker [IMAGE]
 
 Options:
   --local             Test the local build prefix. This is the default.
   --curl-bin PATH     Local curl binary to test.
   --curl-config PATH  Local curl-config binary to test.
   --prefix PATH       Local install prefix for linkage checks.
-  --docker [IMAGE]    Test a Docker image. Defaults to byo-curl:latest.
   --help              Show this help text.
 
 Useful environment variables:
@@ -76,7 +65,6 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --local)
-      TARGET=local
       shift
       ;;
     --curl-bin)
@@ -103,15 +91,6 @@ while [[ $# -gt 0 ]]; do
       PREFIX_DIR="$2"
       shift 2
       ;;
-    --docker)
-      TARGET=docker
-      if [[ $# -gt 1 && "$2" != --* ]]; then
-        DOCKER_IMAGE="$2"
-        shift 2
-      else
-        shift
-      fi
-      ;;
     --help|-h)
       usage
       exit 0
@@ -124,18 +103,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$TARGET" == "local" ]]; then
-  CURL_BIN="${CURL_BIN:-$ROOT_DIR/curl-build/prefix/bin/curl}"
-  CURL_CONFIG="${CURL_CONFIG:-$ROOT_DIR/curl-build/prefix/bin/curl-config}"
-  PREFIX_DIR="${PREFIX_DIR:-$ROOT_DIR/curl-build/prefix}"
-else
-  CURL_BIN="${CURL_BIN:-$CONTAINER_CURL_BIN}"
-  CURL_CONFIG="${CURL_CONFIG:-$CONTAINER_CURL_CONFIG}"
-  PREFIX_DIR="${PREFIX_DIR:-$CONTAINER_PREFIX_DIR}"
-  # Curl writes HSTS and Alt-Svc cache files inside the container. Mount the
-  # host temp directory there so those checks can inspect the files afterward.
-  TEST_TMPDIR=/tmp/byo-curl-tests
-fi
+CURL_BIN="${CURL_BIN:-$ROOT_DIR/curl-build/prefix/bin/curl}"
+CURL_CONFIG="${CURL_CONFIG:-$ROOT_DIR/curl-build/prefix/bin/curl-config}"
+PREFIX_DIR="${PREFIX_DIR:-$ROOT_DIR/curl-build/prefix}"
 
 pass() {
   printf '%sPASS%s %s\n' "$green" "$reset" "$1"
@@ -173,16 +143,7 @@ require_target_executable() {
   local name="$1"
   local path="$2"
 
-  if [[ "$TARGET" == "docker" ]]; then
-    if docker run --rm --entrypoint /bin/sh "$DOCKER_IMAGE" \
-      -c 'test -x "$1"' sh "$path"; then
-      pass "$name"
-    else
-      fail "$name" "missing executable in image: $path"
-    fi
-  else
-    require_file "$name" "$path"
-  fi
+  require_file "$name" "$path"
 }
 
 contains() {
@@ -225,48 +186,20 @@ curl_status_version() {
 }
 
 run_curl() {
-  if [[ "$TARGET" == "docker" ]]; then
-    docker run --rm --volume "$tmpdir:$TEST_TMPDIR" "$DOCKER_IMAGE" "$@"
-  else
-    "$CURL_BIN" "$@"
-  fi
+  "$CURL_BIN" "$@"
 }
 
 run_in_target() {
   local entrypoint="$1"
   shift
 
-  if [[ "$TARGET" == "docker" ]]; then
-    docker run --rm --entrypoint "$entrypoint" "$DOCKER_IMAGE" "$@"
-  else
-    "$entrypoint" "$@"
-  fi
+  "$entrypoint" "$@"
 }
 
 target_has_command() {
   local command_name="$1"
 
-  if [[ "$TARGET" == "docker" ]]; then
-    docker run --rm --entrypoint /bin/sh "$DOCKER_IMAGE" \
-      -c 'command -v "$1" >/dev/null 2>&1' sh "$command_name"
-  else
-    command -v "$command_name" >/dev/null 2>&1
-  fi
-}
-
-require_docker_image() {
-  if ! command -v docker >/dev/null 2>&1; then
-    fail "docker command exists" "docker is required for --docker mode"
-    return 1
-  fi
-
-  if docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
-    pass "docker image exists"
-    return 0
-  fi
-
-  fail "docker image exists" "missing image: $DOCKER_IMAGE"
-  return 1
+  command -v "$command_name" >/dev/null 2>&1
 }
 
 check_status_version() {
@@ -317,6 +250,40 @@ run_optional_url_check() {
 
   local output
   if output="$(curl_capture "$@" --output /dev/null "$url" 2>&1)"; then
+    pass "$name"
+  else
+    fail "$name" "$output"
+  fi
+}
+
+run_header_check() {
+  local name="$1"
+  local needle="$2"
+  shift 2
+  local headers_file="$tmpdir/${name//[^A-Za-z0-9_]/_}.headers"
+  local output
+
+  if output="$(curl_capture --dump-header "$headers_file" --output /dev/null "$@" 2>&1)"; then
+    if grep -qi "$needle" "$headers_file"; then
+      pass "$name"
+    else
+      fail "$name" "response headers did not contain: $needle"
+    fi
+  else
+    fail "$name" "$output"
+  fi
+}
+
+run_ws_check() {
+  local name="$1"
+  local url="$2"
+  local output rc
+
+  output="$(run_curl --silent --show-error --max-time 5 "$url" 2>&1)"
+  rc=$?
+  if [[ $rc -eq 0 ]]; then
+    pass "$name"
+  elif [[ $rc -eq 28 && "$output" == *"Request served by"* ]]; then
     pass "$name"
   else
     fail "$name" "$output"
@@ -386,21 +353,12 @@ check_pinned_versions() {
   done
 }
 
-if [[ "$TARGET" == "docker" ]]; then
-  printf 'Testing Docker image: %s\n' "$DOCKER_IMAGE"
-  printf 'Container curl: %s\n\n' "$CURL_BIN"
-  require_docker_image || {
-    printf '\nCannot continue without a Docker image.\n' >&2
-    exit 1
-  }
-else
-  printf 'Testing curl binary: %s\n\n' "$CURL_BIN"
-fi
+printf 'Testing curl binary: %s\n\n' "$CURL_BIN"
 
 require_target_executable "curl binary exists" "$CURL_BIN"
 require_target_executable "curl-config exists" "$CURL_CONFIG"
 
-if [[ "$TARGET" == "local" && ! -x "$CURL_BIN" ]]; then
+if [[ ! -x "$CURL_BIN" ]]; then
   printf '\nCannot continue without a curl binary.\n' >&2
   exit 1
 fi
@@ -452,9 +410,12 @@ else
   check_status_version "HTTPS over HTTP/2" '2' --http2 "$HTTP2_URL"
   check_status_version "HTTPS over HTTP/3" '3' --http3 --tlsv1.3 "$HTTP3_URL"
 
-  run_text_check "gzip decompression" '"gzipped":true' --compressed "$GZIP_URL"
-  run_text_check "Brotli decompression" '"brotli":true' --compressed "$BROTLI_URL"
-  run_text_check "zstd advertised in Accept-Encoding" 'zstd' --compressed "$HEADERS_URL"
+  run_header_check "gzip negotiation" '^content-encoding: gzip' \
+    --compressed --header 'Accept-Encoding: gzip' "$COMPRESSION_URL"
+  run_header_check "Brotli negotiation" '^content-encoding: br' \
+    --compressed --header 'Accept-Encoding: br' "$COMPRESSION_URL"
+  run_text_check "zstd advertised in Accept-Encoding" 'Accept-Encoding: deflate, gzip, br, zstd' \
+    --trace-ascii - --compressed --output /dev/null "$COMPRESSION_URL"
 
   ech_output="$(curl_capture --tlsv1.3 --ech hard --doh-url "$DOH_URL" "$ECH_URL" 2>&1)"
   ech_rc=$?
@@ -490,9 +451,9 @@ else
   fi
 
   run_optional_url_check "FTP_TEST" "$FTP_TEST_URL"
-  run_optional_url_check "SFTP_TEST" "$SFTP_TEST_URL"
-  run_optional_url_check "SCP_TEST" "$SCP_TEST_URL"
-  run_optional_url_check "WS_TEST" "$WS_TEST_URL"
+  run_optional_url_check "SFTP_TEST" "$SFTP_TEST_URL" --insecure
+  run_optional_url_check "SCP_TEST" "$SCP_TEST_URL" --insecure
+  run_ws_check "WS_TEST" "$WS_TEST_URL"
 fi
 
 printf '\nSummary: %d passed, %d failed, %d skipped\n' \
