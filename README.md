@@ -5,8 +5,8 @@ tags, install it into a local prefix, and optionally package that prefix into a
 Docker runtime image.
 
 The resulting curl is built with OpenSSL 4, ECH/HTTPS RR, HTTP/2 via nghttp2,
-HTTP/3 via ngtcp2/nghttp3, zlib, Brotli, zstd, libidn2, libpsl, libssh, and
-OpenLDAP.
+HTTP/3 via ngtcp2/nghttp3, c-ares, zlib, Brotli, zstd, libidn2, libpsl,
+libssh, OpenLDAP, and MIT Kerberos/GSS-API.
 
 ## Files
 
@@ -61,7 +61,8 @@ Check it with:
 ./curl-build/prefix/bin/curl --version
 ```
 
-The `Features:` line should include `ECH` and `HTTPSRR`.
+The `Features:` line should include `ECH`, `HTTPSRR`, `GSS-API`, `Kerberos`,
+and `SPNEGO`.
 
 ## Test curl
 
@@ -73,14 +74,21 @@ After a build, run the smoke test suite:
 
 The script checks the compiled dependency versions against `build-curl.sh`,
 enabled protocols and features, runtime library linkage, HTTP/1.1, HTTP/2,
-HTTP/3, gzip, Brotli, zstd negotiation, ECH, HSTS, Alt-Svc, LDAPS, FTP, SFTP,
-SCP, and WSS.
+HTTP/3, c-ares DNS server override support, gzip, Brotli, zstd negotiation,
+ECH, HSTS, Alt-Svc, LDAPS, FTP, SFTP, SCP, and WSS.
 
 For local-only checks without public network requests:
 
 ```bash
 SKIP_NETWORK=1 ./test-curl.sh
 ```
+
+The smoke test confirms MIT Kerberos/GSS-API support is present, reported by
+curl, and linked from `curl-build/prefix`. It does not perform a live
+Kerberos/SPNEGO authentication exchange because that requires a configured
+Kerberos realm, credentials, and an HTTP/FTP/SOCKS/SSH service that accepts
+GSS-API or Negotiate authentication. Validate that separately in the target
+Kerberos environment.
 
 FTP, SFTP, SCP, and WSS default to public test endpoints:
 
@@ -220,6 +228,16 @@ The libunistring git checkout needs its `gnulib` checkout pulled before
 bootstrap. The script does this and then builds only the library/header subtree,
 so `texinfo` is not required.
 
+MIT Kerberos is built from the `krb5-1.22.2-final` git tag. curl is configured
+with `--with-gssapi`, which enables GSS-API, Kerberos, and SPNEGO support.
+The smoke test verifies the build artifacts and runtime linkage for this support
+but leaves live realm authentication to the deployment environment.
+
+c-ares is built from the `v1.34.8` git tag. curl is configured with
+`--enable-ares`, so `AsynchDNS` comes from c-ares instead of the POSIX threaded
+resolver. The smoke test exercises this at runtime with curl's `--dns-servers`
+option against Cloudflare DNS by default.
+
 RTMP/librtmp is intentionally not included. curl 8.20.0 removed RTMP support, so
 building librtmp would not make this curl support RTMP.
 
@@ -228,6 +246,6 @@ building librtmp would not make this curl support RTMP.
 A successful build should report features similar to:
 
 ```text
-curl 8.21.0-i81b4u ... OpenSSL/4.0.1 ... nghttp2/1.69.0 ngtcp2/1.24.0 nghttp3/1.17.0 ...
-Features: alt-svc AsynchDNS brotli ECH HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Largefile libz PSL SSL threadsafe TLS-SRP UnixSockets zstd
+curl 8.21.0-i81b4u ... OpenSSL/4.0.1 ... c-ares/1.34.8 ... nghttp2/1.69.0 ngtcp2/1.24.0 nghttp3/1.17.0 ...
+Features: alt-svc AsynchDNS brotli ECH GSS-API HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Kerberos Largefile libz PSL SPNEGO SSL threadsafe TLS-SRP UnixSockets zstd
 ```

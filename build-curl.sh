@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Pinned upstream versions. Most are git tags; OpenSSL and curl use the tag
+# naming convention expected by their repositories. Every value can be
+# overridden from the environment when testing a newer dependency.
 OPENSSL_VERSION="${OPENSSL_VERSION:-4.0.1}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.69.0}"
 NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.17.0}"
 NGTCP2_VERSION="${NGTCP2_VERSION:-v1.24.0}"
 CURL_VERSION="${CURL_VERSION:-curl-8_21_0}"
 ZLIB_VERSION="${ZLIB_VERSION:-v1.3.2}"
+CARES_VERSION="${CARES_VERSION:-v1.34.8}"
 BROTLI_VERSION="${BROTLI_VERSION:-v1.2.0}"
 ZSTD_VERSION="${ZSTD_VERSION:-v1.5.7}"
 LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-v1.4.2}"
@@ -14,6 +18,7 @@ LIBIDN2_VERSION="${LIBIDN2_VERSION:-v2.3.8}"
 LIBPSL_VERSION="${LIBPSL_VERSION:-0.22.0}"
 LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.12.0}"
 OPENLDAP_VERSION="${OPENLDAP_VERSION:-OPENLDAP_REL_ENG_2_6_13}"
+KRB5_VERSION="${KRB5_VERSION:-krb5-1.22.2-final}"
 CURL_BUILD_SUFFIX="${CURL_BUILD_SUFFIX:-i81b4u}"
 CURL_RELEASE_DATE="${CURL_RELEASE_DATE:-$(date +%Y-%m-%d)}"
 
@@ -130,6 +135,7 @@ autotools_build() {
 }
 
 require_tools() {
+  # These are host build tools, not curl runtime dependencies.
   local commands=(
     autoconf automake autoreconf cmake gengetopt git gperf libtoolize make
     date perl pkg-config sed autopoint
@@ -151,6 +157,7 @@ fetch_sources() {
   clone_repo nghttp3 "$NGHTTP3_VERSION" https://github.com/ngtcp2/nghttp3.git yes
   clone_repo ngtcp2 "$NGTCP2_VERSION" https://github.com/ngtcp2/ngtcp2.git yes
   clone_repo zlib "$ZLIB_VERSION" https://github.com/madler/zlib.git
+  clone_repo c-ares "$CARES_VERSION" https://github.com/c-ares/c-ares.git
   clone_repo brotli "$BROTLI_VERSION" https://github.com/google/brotli.git
   clone_repo zstd "$ZSTD_VERSION" https://github.com/facebook/zstd.git
   clone_repo libunistring "$LIBUNISTRING_VERSION" https://https.git.savannah.gnu.org/git/libunistring.git/
@@ -158,6 +165,7 @@ fetch_sources() {
   clone_repo libpsl "$LIBPSL_VERSION" https://github.com/rockdaboot/libpsl.git yes
   clone_repo libssh "$LIBSSH_VERSION" https://git.libssh.org/projects/libssh.git
   clone_repo openldap "$OPENLDAP_VERSION" https://github.com/openldap/openldap.git
+  clone_repo krb5 "$KRB5_VERSION" https://github.com/krb5/krb5.git
   clone_repo curl "$CURL_VERSION" https://github.com/curl/curl.git
 }
 
@@ -215,6 +223,9 @@ build_openssl() {
   log "Building OpenSSL $OPENSSL_VERSION"
   (
     cd "$SRC_DIR/openssl"
+    # OpenSSL builds in-tree. Clean generated files so reruns use the current
+    # configure arguments and do not accidentally retain objects from a prior
+    # dependency experiment.
     git clean -xfd
     ./Configure \
       --prefix="$PREFIX" \
@@ -232,6 +243,7 @@ build_zlib() {
   log "Building zlib $ZLIB_VERSION"
   (
     cd "$SRC_DIR/zlib"
+    # zlib's upstream build is also in-tree.
     git clean -xfd
     ./configure --prefix="$PREFIX"
     make -j"$JOBS"
@@ -239,8 +251,22 @@ build_zlib() {
   )
 }
 
+build_cares() {
+  log "Building c-ares $CARES_VERSION"
+  # c-ares gives curl an asynchronous resolver. The smoke test later exercises
+  # this path with curl's --dns-servers option, which is not available with the
+  # default threaded resolver.
+  cmake_build c-ares \
+    -DBUILD_SHARED_LIBS=ON \
+    -DCARES_STATIC=OFF \
+    -DCARES_SHARED=ON \
+    -DCARES_BUILD_TOOLS=OFF \
+    -DCARES_BUILD_TESTS=OFF
+}
+
 build_brotli() {
   log "Building Brotli $BROTLI_VERSION"
+  # curl links to libbrotlidec for response decompression.
   cmake_build brotli \
     -DBUILD_SHARED_LIBS=ON \
     -DBROTLI_DISABLE_TESTS=ON
@@ -248,6 +274,7 @@ build_brotli() {
 
 build_zstd() {
   log "Building zstd $ZSTD_VERSION"
+  # zstd's library makefile supports direct installation into PREFIX.
   make -C "$SRC_DIR/zstd/lib" -j"$JOBS" PREFIX="$PREFIX" install
 }
 
@@ -284,6 +311,7 @@ build_libunistring() {
 
 build_libidn2() {
   log "Building libidn2 $LIBIDN2_VERSION"
+  # libidn2 provides IDNA support; it depends on the libunistring build above.
   autotools_build libidn2 \
     --disable-doc \
     --disable-nls \
@@ -292,6 +320,8 @@ build_libidn2() {
 
 build_libpsl() {
   log "Building libpsl $LIBPSL_VERSION"
+  # libpsl lets curl reason about public suffix boundaries for cookies and
+  # related host policy decisions. Use the bundled public suffix data.
   autotools_build libpsl \
     --disable-gtk-doc \
     --disable-man \
@@ -302,6 +332,7 @@ build_libpsl() {
 
 build_nghttp2() {
   log "Building nghttp2 $NGHTTP2_VERSION"
+  # nghttp2 supplies curl's HTTP/2 implementation.
   cmake_build nghttp2 \
     -DBUILD_SHARED_LIBS=ON \
     -DENABLE_LIB_ONLY=ON \
@@ -310,6 +341,7 @@ build_nghttp2() {
 
 build_nghttp3() {
   log "Building nghttp3 $NGHTTP3_VERSION"
+  # nghttp3 is the HTTP/3 layer used by ngtcp2.
   cmake_build nghttp3 \
     -DBUILD_SHARED_LIBS=ON \
     -DENABLE_LIB_ONLY=ON \
@@ -318,6 +350,8 @@ build_nghttp3() {
 
 build_ngtcp2() {
   log "Building ngtcp2 $NGTCP2_VERSION"
+  # ngtcp2 supplies QUIC transport for curl's HTTP/3 support. This build binds
+  # it to the OpenSSL QUIC/TLS stack built earlier.
   autotools_build ngtcp2 \
     --enable-lib-only \
     --with-openssl="$PREFIX" \
@@ -330,12 +364,48 @@ build_ngtcp2() {
 
 build_libssh() {
   log "Building libssh $LIBSSH_VERSION"
+  # libssh provides curl's SCP/SFTP protocols. WITH_GSSAPI makes SSH
+  # authentication able to use the MIT Kerberos libraries built below.
   cmake_build libssh \
     -DBUILD_SHARED_LIBS=ON \
     -DWITH_EXAMPLES=OFF \
     -DWITH_TESTING=OFF \
-    -DWITH_GSSAPI=OFF \
+    -DWITH_GSSAPI=ON \
     -DOPENSSL_ROOT_DIR="$PREFIX"
+}
+
+build_krb5() {
+  log "Building MIT Kerberos $KRB5_VERSION"
+  local src="$SRC_DIR/krb5/src"
+  local bld="$BUILD_DIR/krb5"
+
+  # The krb5 repository keeps the Autotools project below src/.
+  rm -rf "$bld"
+  mkdir -p "$bld"
+  (
+    cd "$src"
+    if [[ ! -x ./configure ]]; then
+      if [[ -x ./util/reconf ]]; then
+        ./util/reconf
+      else
+        autoreconf -fi
+      fi
+    fi
+  )
+  (
+    cd "$bld"
+    # MIT krb5's default warning flags can turn harmless const-qualifier
+    # warnings into build failures with newer compilers. PKINIT is not needed
+    # for curl's GSS-API/SPNEGO support and this pinned krb5 tag does not
+    # compile that plugin against OpenSSL 4's opaque ASN.1 types.
+    WARN_CFLAGS= WARN_CXXFLAGS= "$src/configure" \
+      --prefix="$PREFIX" \
+      --disable-static \
+      --disable-pkinit \
+      --without-system-verto
+    make -j"$JOBS"
+    make install
+  )
 }
 
 build_openldap() {
@@ -343,6 +413,9 @@ build_openldap() {
   local src="$SRC_DIR/openldap"
   local bld="$BUILD_DIR/openldap"
 
+  # curl only needs LDAP client libraries, not the slapd server, backends, or
+  # overlays. Cyrus SASL is disabled because this build uses curl's GSS-API path
+  # through MIT Kerberos instead.
   rm -rf "$bld"
   mkdir -p "$bld"
   (
@@ -369,6 +442,9 @@ build_openldap() {
 
 build_curl() {
   log "Building curl $CURL_VERSION"
+  # This is where the locally built dependency graph is wired into curl. The
+  # explicit --enable/--with options make configure fail loudly if an expected
+  # dependency cannot be found in PREFIX.
   autotools_build curl \
     --with-openssl="$PREFIX" \
     --with-nghttp2="$PREFIX" \
@@ -380,6 +456,8 @@ build_curl() {
     --with-libidn2="$PREFIX" \
     --with-libpsl="$PREFIX" \
     --with-libssh="$PREFIX" \
+    --enable-ares="$PREFIX" \
+    --with-gssapi="$PREFIX" \
     --enable-ech \
     --enable-ldap \
     --enable-ldaps
@@ -395,9 +473,11 @@ main() {
   patch_curl_version
 
   # Build dependency order matters: ngtcp2 needs OpenSSL/nghttp3, libidn2 needs
-  # libunistring, libpsl uses libidn2, and curl consumes the full prefix.
+  # libunistring, libpsl uses libidn2, libssh can use krb5, and curl consumes
+  # the full prefix.
   build_openssl
   build_zlib
+  build_cares
   build_brotli
   build_zstd
   build_libunistring
@@ -406,6 +486,7 @@ main() {
   build_nghttp2
   build_nghttp3
   build_ngtcp2
+  build_krb5
   build_libssh
   build_openldap
   build_curl

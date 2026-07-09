@@ -3,6 +3,9 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The suite can test either the default local build prefix or explicit paths
+# supplied by CI, Docker, or a developer comparing another curl binary.
 CURL_BIN="${CURL_BIN:-}"
 CURL_CONFIG="${CURL_CONFIG:-}"
 PREFIX_DIR="${PREFIX_DIR:-}"
@@ -11,14 +14,20 @@ SKIP_NETWORK="${SKIP_NETWORK:-0}"
 SKIP_LDAP="${SKIP_LDAP:-0}"
 CHECK_PINNED_VERSIONS="${CHECK_PINNED_VERSIONS:-1}"
 
+# Public endpoints used by the network checks. They are intentionally
+# configurable because protocol test services sometimes move or rate-limit.
 HTTP1_URL="${HTTP1_URL:-https://example.com/}"
 HTTP2_URL="${HTTP2_URL:-https://www.cloudflare.com/}"
 HTTP3_URL="${HTTP3_URL:-https://www.cloudflare.com/}"
 ECH_URL="${ECH_URL:-https://crypto.cloudflare.com/cdn-cgi/trace}"
 DOH_URL="${DOH_URL:-https://cloudflare-dns.com/dns-query}"
+CARES_DNS_SERVER="${CARES_DNS_SERVER:-1.1.1.1}"
+CARES_DNS_URL="${CARES_DNS_URL:-https://example.com/}"
 COMPRESSION_URL="${COMPRESSION_URL:-https://www.cloudflare.com/}"
 LDAPS_URL="${LDAPS_URL:-ldaps://db.debian.org/uid=joey,ou=users,dc=debian,dc=org?cn}"
 
+# Optional protocol endpoints. Emptying one of these variables skips that
+# protocol-specific check without disabling all network tests.
 FTP_TEST_URL="${FTP_TEST_URL:-ftp://demo:password@test.rebex.net/}"
 SFTP_TEST_URL="${SFTP_TEST_URL:-sftp://demo:password@test.rebex.net/}"
 SCP_TEST_URL="${SCP_TEST_URL:-scp://demo:password@test.rebex.net/readme.txt}"
@@ -32,6 +41,7 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 TEST_TMPDIR="$tmpdir"
 
+# Keep output readable in terminals while leaving logs plain in non-TTY runs.
 green=
 red=
 yellow=
@@ -59,6 +69,8 @@ Useful environment variables:
   SKIP_NETWORK=1      Run only local metadata/linkage checks.
   SKIP_LDAP=1         Skip the public LDAPS query.
   TIMEOUT=20          Per-request timeout in seconds.
+  CARES_DNS_SERVER=1.1.1.1
+                      DNS server used by the c-ares runtime check.
 EOF
 }
 
@@ -203,6 +215,9 @@ target_has_command() {
 }
 
 check_status_version() {
+  # Fetch a URL and assert both a successful status code and the negotiated HTTP
+  # version. This catches regressions where a protocol is compiled in but not
+  # actually usable against a real endpoint.
   local name="$1"
   local expected_version="$2"
   shift 2
@@ -222,6 +237,8 @@ check_status_version() {
 }
 
 run_text_check() {
+  # Use for checks where curl's response body or trace output should contain a
+  # small stable marker.
   local name="$1"
   local needle="$2"
   shift 2
@@ -239,6 +256,8 @@ run_text_check() {
 }
 
 run_optional_url_check() {
+  # Protocol checks such as FTP/SFTP/SCP are useful but endpoint-dependent. A
+  # caller can set the URL to an empty string to skip a single protocol.
   local name="$1"
   local url="$2"
   shift 2
@@ -257,6 +276,8 @@ run_optional_url_check() {
 }
 
 run_header_check() {
+  # Header-based checks are used for content negotiation so the body does not
+  # need to be downloaded or parsed.
   local name="$1"
   local needle="$2"
   shift 2
@@ -275,6 +296,8 @@ run_header_check() {
 }
 
 run_ws_check() {
+  # The public websocket endpoint keeps the connection open long enough for curl
+  # to hit the timeout after receiving a server banner. Treat that as success.
   local name="$1"
   local url="$2"
   local output rc
@@ -291,6 +314,8 @@ run_ws_check() {
 }
 
 pin_default() {
+  # Read version defaults directly from build-curl.sh so the test expectations
+  # stay aligned with the build script.
   local name="$1"
   sed -n 's/^'"$name"'="${'"$name"':-\([^}]*\)}".*/\1/p' "$ROOT_DIR/build-curl.sh"
 }
@@ -307,7 +332,7 @@ openldap_version() {
 }
 
 check_pinned_versions() {
-  local openssl nghttp2 nghttp3 ngtcp2 zlib brotli zstd libidn2 libpsl libssh openldap
+  local openssl nghttp2 nghttp3 ngtcp2 zlib cares brotli zstd libidn2 libpsl libssh openldap krb5
   # Keep expected dependency versions in one place by reading the defaults from
   # build-curl.sh instead of duplicating them in this test script.
   openssl="$(pin_default OPENSSL_VERSION)"
@@ -315,6 +340,7 @@ check_pinned_versions() {
   nghttp3="$(strip_v "$(pin_default NGHTTP3_VERSION)")"
   ngtcp2="$(strip_v "$(pin_default NGTCP2_VERSION)")"
   zlib="$(strip_v "$(pin_default ZLIB_VERSION)")"
+  cares="$(strip_v "$(pin_default CARES_VERSION)")"
   brotli="$(strip_v "$(pin_default BROTLI_VERSION)")"
   zstd="$(strip_v "$(pin_default ZSTD_VERSION)")"
   libidn2="$(strip_v "$(pin_default LIBIDN2_VERSION)")"
@@ -322,11 +348,14 @@ check_pinned_versions() {
   libssh="$(pin_default LIBSSH_VERSION)"
   libssh="${libssh#libssh-}"
   openldap="$(openldap_version "$(pin_default OPENLDAP_VERSION)")"
+  krb5="$(pin_default KRB5_VERSION)"
+  krb5="${krb5#krb5-}"
+  krb5="${krb5%-final}"
 
   local missing=0
   for value in "$openssl" "$nghttp2" "$nghttp3" "$ngtcp2" "$zlib" \
-               "$brotli" "$zstd" "$libidn2" "$libpsl" "$libssh" \
-               "$openldap"; do
+               "$cares" "$brotli" "$zstd" "$libidn2" "$libpsl" \
+               "$libssh" "$openldap" "$krb5"; do
     if [[ -z "$value" ]]; then
       missing=1
     fi
@@ -340,6 +369,7 @@ check_pinned_versions() {
   for needle in \
     "OpenSSL/$openssl" \
     "zlib/$zlib" \
+    "c-ares/$cares" \
     "brotli/$brotli" \
     "zstd/$zstd" \
     "libidn2/$libidn2" \
@@ -351,6 +381,14 @@ check_pinned_versions() {
     "OpenLDAP/$openldap"; do
     assert_contains "version reports $needle" "$version_output" "$needle"
   done
+
+  if [[ -x "$PREFIX_DIR/bin/krb5-config" ]]; then
+    local krb5_output
+    krb5_output="$(run_in_target "$PREFIX_DIR/bin/krb5-config" --version 2>&1)"
+    assert_contains "krb5-config reports $krb5" "$krb5_output" "$krb5"
+  else
+    fail "krb5-config exists" "missing executable: $PREFIX_DIR/bin/krb5-config"
+  fi
 }
 
 printf 'Testing curl binary: %s\n\n' "$CURL_BIN"
@@ -370,14 +408,18 @@ config_protocols="$(run_in_target "$CURL_CONFIG" --protocols 2>/dev/null || true
 printf '%s\n\n' "$version_output"
 
 if [[ "$CHECK_PINNED_VERSIONS" == "1" ]]; then
+  # These checks prove the expected libraries were compiled into this curl, not
+  # merely that a feature name appeared in curl-config output.
   check_pinned_versions
 else
   skip "pinned dependency version checks" "CHECK_PINNED_VERSIONS=0"
 fi
 
+# libssh and libssh2 provide the same curl protocols but are distinct libraries.
 assert_not_contains "version does not report libssh2" "$version_output" 'libssh2'
 
-for feature in ECH HTTP2 HTTP3 HTTPSRR IDN PSL SSL brotli zstd; do
+# curl-config and curl --version use slightly different formats, so check both.
+for feature in ECH GSS-API HTTP2 HTTP3 HTTPSRR IDN Kerberos PSL SPNEGO SSL brotli zstd; do
   assert_contains "feature $feature enabled" "$config_features"$'\n'"$version_output" "$feature"
 done
 
@@ -386,17 +428,24 @@ for protocol in http https ldap ldaps scp sftp ws wss; do
 done
 
 if target_has_command ldd; then
+  # Linkage checks make sure runtime resolution points at curl-build/prefix
+  # instead of compatible libraries accidentally found on the host system.
   ldd_output="$(run_in_target ldd "$CURL_BIN" 2>&1)"
   assert_contains "ldd uses prefix libcurl" "$ldd_output" "$PREFIX_DIR/lib/libcurl.so"
   assert_contains "ldd uses prefix ngtcp2" "$ldd_output" "$PREFIX_DIR/lib/libngtcp2.so"
   assert_contains "ldd uses prefix nghttp3" "$ldd_output" "$PREFIX_DIR/lib/libnghttp3.so"
   assert_contains "ldd uses prefix libssh" "$ldd_output" "$PREFIX_DIR/lib/libssh.so"
+  assert_contains "ldd uses prefix c-ares" "$ldd_output" "$PREFIX_DIR/lib/libcares.so"
+  assert_contains "ldd uses prefix GSS-API" "$ldd_output" "$PREFIX_DIR/lib/libgssapi_krb5.so"
+  assert_contains "ldd uses prefix krb5" "$ldd_output" "$PREFIX_DIR/lib/libkrb5.so"
   assert_not_contains "ldd does not use libssh2" "$ldd_output" 'libssh2'
 else
   skip "ldd checks" "ldd is not available in target"
 fi
 
 if target_has_command readelf; then
+  # RUNPATH is what lets the built curl run from its prefix without requiring a
+  # user to export LD_LIBRARY_PATH manually.
   readelf_output="$(run_in_target readelf -d "$CURL_BIN" 2>&1)"
   assert_contains "curl has prefix RUNPATH" "$readelf_output" "$PREFIX_DIR/lib"
 else
@@ -406,9 +455,15 @@ fi
 if [[ "$SKIP_NETWORK" == "1" ]]; then
   skip "network tests" "SKIP_NETWORK=1"
 else
+  # Network checks exercise protocol behavior that cannot be proven from
+  # --version output alone.
   check_status_version "HTTPS over HTTP/1.1" '1.1' --http1.1 "$HTTP1_URL"
   check_status_version "HTTPS over HTTP/2" '2' --http2 "$HTTP2_URL"
   check_status_version "HTTPS over HTTP/3" '3' --http3 --tlsv1.3 "$HTTP3_URL"
+  # --dns-servers is backed by c-ares, so this is a runtime resolver check
+  # rather than a generic "can resolve names" check.
+  check_status_version "c-ares DNS server override" '1.1' \
+    --http1.1 --dns-servers "$CARES_DNS_SERVER" "$CARES_DNS_URL"
 
   run_header_check "gzip negotiation" '^content-encoding: gzip' \
     --compressed --header 'Accept-Encoding: gzip' "$COMPRESSION_URL"
@@ -420,6 +475,8 @@ else
   ech_output="$(curl_capture --tlsv1.3 --ech hard --doh-url "$DOH_URL" "$ECH_URL" 2>&1)"
   ech_rc=$?
   if [[ $ech_rc -eq 0 ]]; then
+    # Cloudflare's trace endpoint exposes whether SNI was encrypted and which
+    # TLS version was negotiated.
     assert_contains "ECH encrypts SNI" "$ech_output" 'sni=encrypted'
     assert_contains "ECH endpoint used TLS 1.3" "$ech_output" 'tls=TLSv1.3'
   else
@@ -428,6 +485,8 @@ else
 
   hsts_file="$TEST_TMPDIR/hsts.txt"
   hsts_host_file="$tmpdir/hsts.txt"
+  # HSTS and Alt-Svc are state-file features. The checks verify curl writes the
+  # expected cache files after talking to a real HTTPS endpoint.
   if curl_capture --hsts "$hsts_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 &&
      [[ -s "$hsts_host_file" ]]; then
     pass "HSTS cache file populated"
