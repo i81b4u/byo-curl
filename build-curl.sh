@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # Pinned upstream versions. Most are git tags; OpenSSL and curl use the tag
 # naming convention expected by their repositories. Every value can be
 # overridden from the environment when testing a newer dependency.
-OPENSSL_VERSION="${OPENSSL_VERSION:-4.0.1}"
+OPENSSL_VERSION="${OPENSSL_VERSION:-openssl-4.0.1}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.69.0}"
 NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.17.0}"
 NGTCP2_VERSION="${NGTCP2_VERSION:-v1.24.0}"
@@ -263,7 +263,7 @@ build_cached() {
 # Fetch all sources from git. Some projects need submodules because their build
 # system or test-disabled library build expects bundled helper files.
 fetch_sources() {
-  clone_repo openssl "openssl-$OPENSSL_VERSION" https://github.com/openssl/openssl.git
+  clone_repo openssl "$OPENSSL_VERSION" https://github.com/openssl/openssl.git
   clone_repo nghttp2 "$NGHTTP2_VERSION" https://github.com/nghttp2/nghttp2.git
   clone_repo nghttp3 "$NGHTTP3_VERSION" https://github.com/ngtcp2/nghttp3.git yes
   clone_repo ngtcp2 "$NGTCP2_VERSION" https://github.com/ngtcp2/ngtcp2.git yes
