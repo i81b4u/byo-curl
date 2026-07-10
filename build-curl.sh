@@ -30,6 +30,15 @@ SRC_DIR="$WORK_DIR/src"
 BUILD_DIR="$WORK_DIR/build"
 PREFIX="${PREFIX:-$WORK_DIR/prefix}"
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}"
+# Reuse completed components only when all inputs that affect their output are
+# unchanged. REFRESH_SOURCES opts into a network refresh of existing checkouts.
+BUILD_CACHE="${BUILD_CACHE:-1}"
+REFRESH_SOURCES="${REFRESH_SOURCES:-0}"
+# State holds cache keys; logs contain the complete output for each stage.
+STATE_DIR="$WORK_DIR/state"
+LOG_DIR="$WORK_DIR/logs"
+TOTAL_STAGES=17
+stage_number=0
 
 # Prefer the freshly built dependencies over system libraries and embed rpaths
 # so the resulting curl can run from this prefix without extra linker setup.
@@ -63,8 +72,12 @@ clone_repo() {
 
   if [[ -d "$dst/.git" ]]; then
     log "Using existing source: $name"
-    git -C "$dst" fetch --depth 1 origin "$branch"
-    git -C "$dst" checkout -q FETCH_HEAD
+    if [[ "$REFRESH_SOURCES" == "1" ]] || ! git -C "$dst" rev-parse -q --verify "$branch^{commit}" >/dev/null; then
+      git -C "$dst" fetch --depth 1 origin "$branch"
+      git -C "$dst" checkout -q FETCH_HEAD
+    else
+      git -C "$dst" checkout -q "$branch"
+    fi
   else
     log "Cloning $name ($branch)"
     git clone --depth 1 --branch "$branch" "$url" "$dst"
@@ -138,7 +151,7 @@ require_tools() {
   # These are host build tools, not curl runtime dependencies.
   local commands=(
     autoconf automake autoreconf cmake gengetopt git gperf libtoolize make
-    date perl pkg-config sed autopoint
+    date perl pkg-config sed autopoint yacc awk sha256sum
   )
   for cmd in "${commands[@]}"; do
     need_cmd "$cmd"
@@ -146,7 +159,105 @@ require_tools() {
 }
 
 prepare() {
-  mkdir -p "$SRC_DIR" "$BUILD_DIR" "$PREFIX"
+  mkdir -p "$SRC_DIR" "$BUILD_DIR" "$PREFIX" "$STATE_DIR" "$LOG_DIR"
+}
+
+# Run one named build stage in the background so its complete output can be
+# retained in a log while the foreground reports progress. Non-interactive
+# callers receive newline-delimited status instead of terminal control codes.
+run_stage() {
+  local name="$1"
+  shift
+  local stage_log slug pid start elapsed frame_index=0
+  local -a frames=( '|' '/' '-' $'\\' )
+
+  stage_number=$((stage_number + 1))
+  slug="${name,,}"
+  slug="${slug// /-}"
+  slug="${slug//[^a-z0-9-]/}"
+  stage_log="$LOG_DIR/$(printf '%02d' "$stage_number")-$slug.log"
+  start=$SECONDS
+
+  if [[ -t 1 ]]; then
+    printf '[%02d/%02d] %s' "$stage_number" "$TOTAL_STAGES" "$name"
+  else
+    printf '[%02d/%02d] %s started\n' "$stage_number" "$TOTAL_STAGES" "$name"
+  fi
+  "$@" >"$stage_log" 2>&1 &
+  pid=$!
+
+  if [[ -t 1 ]]; then
+    while kill -0 "$pid" 2>/dev/null; do
+      printf '\r[%02d/%02d] %s %s' \
+        "$stage_number" "$TOTAL_STAGES" "$name" "${frames[frame_index]}"
+      frame_index=$(((frame_index + 1) % ${#frames[@]}))
+      sleep 0.1
+    done
+  fi
+
+  if wait "$pid"; then
+    elapsed=$((SECONDS - start))
+    if [[ -t 1 ]]; then
+      printf '\r\033[K'
+    fi
+    printf '[%02d/%02d] %s done (%ss)\n' \
+      "$stage_number" "$TOTAL_STAGES" "$name" "$elapsed"
+    return
+  fi
+
+  elapsed=$((SECONDS - start))
+  if [[ -t 1 ]]; then
+    printf '\r\033[K'
+  fi
+  printf '[%02d/%02d] %s failed after %ss\n' \
+    "$stage_number" "$TOTAL_STAGES" "$name" "$elapsed" >&2
+  printf 'Log: %s\n\nLast 40 lines:\n' "$stage_log" >&2
+  tail -n 40 "$stage_log" >&2 || true
+  printf '\n' >&2
+  return 1
+}
+
+component_state() {
+  printf '%s/%s.sha256\n' "$STATE_DIR" "$1"
+}
+
+# A component key includes its source revision, build-affecting environment,
+# this script's content, and direct dependency keys. A script edit therefore
+# deliberately invalidates cached components for a conservative rebuild.
+component_key() {
+  local name="$1"
+  shift
+  {
+    printf '%s\n' "source=$(git -C "$SRC_DIR/$name" rev-parse HEAD)"
+    printf '%s\n' "script=$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
+    printf '%s\n' "prefix=$PREFIX" "cflags=$CFLAGS" "cxxflags=$CXXFLAGS"
+    printf '%s\n' "cppflags=$CPPFLAGS" "ldflags=$LDFLAGS"
+    local dependency
+    for dependency in "$@"; do
+      printf '%s=' "$dependency"
+      cat "$(component_state "$dependency")" 2>/dev/null || printf 'missing\n'
+    done
+  } | sha256sum | awk '{print $1}'
+}
+
+build_cached() {
+  local name="$1"
+  local artifact="$2"
+  local builder="$3"
+  shift 3
+  local state key
+  state="$(component_state "$name")"
+  key="$(component_key "$name" "$@")"
+
+  # Do not trust a state file by itself: the expected installed artifact must
+  # still be present before a component can be skipped.
+  if [[ "$BUILD_CACHE" == "1" && -e "$artifact" && -f "$state" && "$(<"$state")" == "$key" ]]; then
+    log "Using cached build: $name"
+    return
+  fi
+
+  "$builder"
+  printf '%s\n' "$key" > "$state"
 }
 
 # Fetch all sources from git. Some projects need submodules because their build
@@ -217,6 +328,11 @@ patch_curl_version() {
     's/#define LIBCURL_VERSION "[^"]+"/#define LIBCURL_VERSION "'"$stamped_version"'"/;
      s/#define LIBCURL_TIMESTAMP "[^"]+"/#define LIBCURL_TIMESTAMP "'"$CURL_RELEASE_DATE"'"/;' \
     "$header"
+}
+
+apply_source_patches() {
+  patch_openldap
+  patch_curl_version
 }
 
 build_openssl() {
@@ -466,34 +582,37 @@ build_curl() {
 main() {
   require_tools
   prepare
-  fetch_sources
+  printf 'Build logs: %s\n\n' "$LOG_DIR"
+  run_stage "Fetching sources" fetch_sources
 
   # Apply source edits that are specific to this pinned dependency set.
-  patch_openldap
-  patch_curl_version
+  run_stage "Patching sources" apply_source_patches
 
   # Build dependency order matters: ngtcp2 needs OpenSSL/nghttp3, libidn2 needs
   # libunistring, libpsl uses libidn2, libssh can use krb5, and curl consumes
   # the full prefix.
-  build_openssl
-  build_zlib
-  build_cares
-  build_brotli
-  build_zstd
-  build_libunistring
-  build_libidn2
-  build_libpsl
-  build_nghttp2
-  build_nghttp3
-  build_ngtcp2
-  build_krb5
-  build_libssh
-  build_openldap
-  build_curl
+  run_stage "Building OpenSSL" build_cached openssl "$PREFIX/lib64/libssl.so" build_openssl
+  run_stage "Building zlib" build_cached zlib "$PREFIX/lib/libz.so" build_zlib
+  run_stage "Building c-ares" build_cached c-ares "$PREFIX/lib/libcares.so" build_cares
+  run_stage "Building Brotli" build_cached brotli "$PREFIX/lib/libbrotlidec.so" build_brotli
+  run_stage "Building zstd" build_cached zstd "$PREFIX/lib/libzstd.so" build_zstd
+  run_stage "Building libunistring" build_cached libunistring "$PREFIX/lib/libunistring.so" build_libunistring
+  run_stage "Building libidn2" build_cached libidn2 "$PREFIX/lib/libidn2.so" build_libidn2 libunistring
+  run_stage "Building libpsl" build_cached libpsl "$PREFIX/lib/libpsl.so" build_libpsl libidn2
+  run_stage "Building nghttp2" build_cached nghttp2 "$PREFIX/lib/libnghttp2.so" build_nghttp2
+  run_stage "Building nghttp3" build_cached nghttp3 "$PREFIX/lib/libnghttp3.so" build_nghttp3
+  run_stage "Building ngtcp2" build_cached ngtcp2 "$PREFIX/lib/libngtcp2.so" build_ngtcp2 openssl nghttp3
+  run_stage "Building MIT Kerberos" build_cached krb5 "$PREFIX/lib/libkrb5.so" build_krb5 openssl
+  run_stage "Building libssh" build_cached libssh "$PREFIX/lib/libssh.so" build_libssh openssl krb5
+  run_stage "Building OpenLDAP" build_cached openldap "$PREFIX/lib/libldap.so" build_openldap openssl
+  run_stage "Building curl" build_cached curl "$PREFIX/bin/curl" build_curl \
+    openssl zlib c-ares brotli zstd libidn2 libpsl nghttp2 nghttp3 ngtcp2 krb5 libssh openldap
 
-  log "Done"
+  printf '\nBuild complete.\n'
   "$PREFIX/bin/curl" --version
   printf '\nBuilt curl: %s/bin/curl\n' "$PREFIX"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

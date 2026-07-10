@@ -13,6 +13,9 @@ TIMEOUT="${TIMEOUT:-20}"
 SKIP_NETWORK="${SKIP_NETWORK:-0}"
 SKIP_LDAP="${SKIP_LDAP:-0}"
 CHECK_PINNED_VERSIONS="${CHECK_PINNED_VERSIONS:-1}"
+# Maximum number of independent network-check groups in flight. Set to 1 for
+# serial diagnostics; the default balances runtime against public endpoint use.
+NETWORK_JOBS="${NETWORK_JOBS:-4}"
 
 # Public endpoints used by the network checks. They are intentionally
 # configurable because protocol test services sometimes move or rate-limit.
@@ -313,6 +316,140 @@ run_ws_check() {
   fi
 }
 
+run_parallel_check() {
+  local name="$1"
+  shift
+  # Wait for the current batch before starting another so NETWORK_JOBS is a
+  # strict upper bound without losing the output needed for the final summary.
+  if (( ${#parallel_pids[@]} >= NETWORK_JOBS )); then
+    collect_parallel_checks
+    parallel_pids=()
+    parallel_logs=()
+  fi
+  # Child output is collected from a file, so keep it free of terminal escape
+  # sequences. The collector uses the PASS/FAIL/SKIP prefix to update totals.
+  (
+    green=
+    red=
+    yellow=
+    reset=
+    "$@"
+  ) >"$tmpdir/$name.log" 2>&1 &
+  parallel_pids+=("$!")
+  parallel_logs+=("$tmpdir/$name.log")
+}
+
+collect_parallel_checks() {
+  local pid log line
+  # Functions run in background subshells, so their counter updates do not
+  # reach this shell. Rebuild those totals from their plain-text result logs.
+  for pid in "${parallel_pids[@]}"; do
+    wait "$pid" || true
+  done
+  for log in "${parallel_logs[@]}"; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        PASS\ *)
+          printf '%sPASS%s%s\n' "$green" "$reset" "${line#PASS}"
+          pass_count=$((pass_count + 1))
+          ;;
+        FAIL\ *)
+          printf '%sFAIL%s%s\n' "$red" "$reset" "${line#FAIL}"
+          fail_count=$((fail_count + 1))
+          ;;
+        SKIP\ *)
+          printf '%sSKIP%s%s\n' "$yellow" "$reset" "${line#SKIP}"
+          skip_count=$((skip_count + 1))
+          ;;
+        *) printf '%s\n' "$line" ;;
+      esac
+    done <"$log"
+  done
+}
+
+network_http_checks() {
+  check_status_version "HTTPS over HTTP/1.1" '1.1' --http1.1 "$HTTP1_URL"
+  check_status_version "HTTPS over HTTP/2" '2' --http2 "$HTTP2_URL"
+  check_status_version "HTTPS over HTTP/3" '3' --http3 --tlsv1.3 "$HTTP3_URL"
+  check_status_version "c-ares DNS server override" '1.1' \
+    --http1.1 --dns-servers "$CARES_DNS_SERVER" "$CARES_DNS_URL"
+}
+
+network_compression_checks() {
+  run_header_check "gzip negotiation" '^content-encoding: gzip' \
+    --compressed --header 'Accept-Encoding: gzip' "$COMPRESSION_URL"
+  run_header_check "Brotli negotiation" '^content-encoding: br' \
+    --compressed --header 'Accept-Encoding: br' "$COMPRESSION_URL"
+  run_text_check "zstd advertised in Accept-Encoding" 'Accept-Encoding: deflate, gzip, br, zstd' \
+    --trace-ascii - --compressed --output /dev/null "$COMPRESSION_URL"
+}
+
+network_ech_check() {
+  local ech_output ech_rc
+  ech_output="$(curl_capture --tlsv1.3 --ech hard --doh-url "$DOH_URL" "$ECH_URL" 2>&1)"
+  ech_rc=$?
+  if [[ $ech_rc -eq 0 ]]; then
+    assert_contains "ECH encrypts SNI" "$ech_output" 'sni=encrypted'
+    assert_contains "ECH endpoint used TLS 1.3" "$ech_output" 'tls=TLSv1.3'
+  else
+    fail "ECH request" "$ech_output"
+  fi
+}
+
+network_cache_checks() {
+  local hsts_file alt_svc_file
+  hsts_file="$TEST_TMPDIR/hsts.txt"
+  if curl_capture --hsts "$hsts_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 && [[ -s "$hsts_file" ]]; then
+    pass "HSTS cache file populated"
+  else
+    fail "HSTS cache file populated" "no HSTS data written to $hsts_file"
+  fi
+
+  alt_svc_file="$TEST_TMPDIR/alt-svc.txt"
+  if curl_capture --alt-svc "$alt_svc_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 && grep -q 'h3' "$alt_svc_file"; then
+    pass "Alt-Svc cache records HTTP/3"
+  else
+    fail "Alt-Svc cache records HTTP/3" "no h3 entry written to $alt_svc_file"
+  fi
+}
+
+network_optional_checks() {
+  if [[ "$SKIP_LDAP" == "1" ]]; then
+    skip "LDAPS query" "SKIP_LDAP=1"
+  else
+    run_text_check "LDAPS query" 'DN: uid=joey,ou=users,dc=debian,dc=org' "$LDAPS_URL"
+  fi
+  run_optional_url_check "FTP_TEST" "$FTP_TEST_URL"
+  run_optional_url_check "SFTP_TEST" "$SFTP_TEST_URL" --insecure
+  run_optional_url_check "SCP_TEST" "$SCP_TEST_URL" --insecure
+  run_ws_check "WS_TEST" "$WS_TEST_URL"
+}
+
+skip_network_checks() {
+  # Keep local-only output aligned with the full suite: every assertion that
+  # would make a public request gets its own explicit skipped result.
+  local name
+  for name in \
+    "HTTPS over HTTP/1.1" \
+    "HTTPS over HTTP/2" \
+    "HTTPS over HTTP/3" \
+    "c-ares DNS server override" \
+    "gzip negotiation" \
+    "Brotli negotiation" \
+    "zstd advertised in Accept-Encoding" \
+    "ECH encrypts SNI" \
+    "ECH endpoint used TLS 1.3" \
+    "HSTS cache file populated" \
+    "Alt-Svc cache records HTTP/3" \
+    "LDAPS query" \
+    "FTP_TEST" \
+    "SFTP_TEST" \
+    "SCP_TEST" \
+    "WS_TEST"; do
+    skip "$name"
+  done
+}
+
 pin_default() {
   # Read version defaults directly from build-curl.sh so the test expectations
   # stay aligned with the build script.
@@ -453,66 +590,24 @@ else
 fi
 
 if [[ "$SKIP_NETWORK" == "1" ]]; then
-  skip "network tests" "SKIP_NETWORK=1"
+  skip_network_checks
 else
   # Network checks exercise protocol behavior that cannot be proven from
   # --version output alone.
-  check_status_version "HTTPS over HTTP/1.1" '1.1' --http1.1 "$HTTP1_URL"
-  check_status_version "HTTPS over HTTP/2" '2' --http2 "$HTTP2_URL"
-  check_status_version "HTTPS over HTTP/3" '3' --http3 --tlsv1.3 "$HTTP3_URL"
-  # --dns-servers is backed by c-ares, so this is a runtime resolver check
-  # rather than a generic "can resolve names" check.
-  check_status_version "c-ares DNS server override" '1.1' \
-    --http1.1 --dns-servers "$CARES_DNS_SERVER" "$CARES_DNS_URL"
-
-  run_header_check "gzip negotiation" '^content-encoding: gzip' \
-    --compressed --header 'Accept-Encoding: gzip' "$COMPRESSION_URL"
-  run_header_check "Brotli negotiation" '^content-encoding: br' \
-    --compressed --header 'Accept-Encoding: br' "$COMPRESSION_URL"
-  run_text_check "zstd advertised in Accept-Encoding" 'Accept-Encoding: deflate, gzip, br, zstd' \
-    --trace-ascii - --compressed --output /dev/null "$COMPRESSION_URL"
-
-  ech_output="$(curl_capture --tlsv1.3 --ech hard --doh-url "$DOH_URL" "$ECH_URL" 2>&1)"
-  ech_rc=$?
-  if [[ $ech_rc -eq 0 ]]; then
-    # Cloudflare's trace endpoint exposes whether SNI was encrypted and which
-    # TLS version was negotiated.
-    assert_contains "ECH encrypts SNI" "$ech_output" 'sni=encrypted'
-    assert_contains "ECH endpoint used TLS 1.3" "$ech_output" 'tls=TLSv1.3'
-  else
-    fail "ECH request" "$ech_output"
+  if [[ ! "$NETWORK_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'NETWORK_JOBS must be a positive integer: %s\n' "$NETWORK_JOBS" >&2
+    exit 2
   fi
-
-  hsts_file="$TEST_TMPDIR/hsts.txt"
-  hsts_host_file="$tmpdir/hsts.txt"
-  # HSTS and Alt-Svc are state-file features. The checks verify curl writes the
-  # expected cache files after talking to a real HTTPS endpoint.
-  if curl_capture --hsts "$hsts_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 &&
-     [[ -s "$hsts_host_file" ]]; then
-    pass "HSTS cache file populated"
-  else
-    fail "HSTS cache file populated" "no HSTS data written to $hsts_host_file"
-  fi
-
-  alt_svc_file="$TEST_TMPDIR/alt-svc.txt"
-  alt_svc_host_file="$tmpdir/alt-svc.txt"
-  if curl_capture --alt-svc "$alt_svc_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 &&
-     grep -q 'h3' "$alt_svc_host_file"; then
-    pass "Alt-Svc cache records HTTP/3"
-  else
-    fail "Alt-Svc cache records HTTP/3" "no h3 entry written to $alt_svc_host_file"
-  fi
-
-  if [[ "$SKIP_LDAP" == "1" ]]; then
-    skip "LDAPS query" "SKIP_LDAP=1"
-  else
-    run_text_check "LDAPS query" 'DN: uid=joey,ou=users,dc=debian,dc=org' "$LDAPS_URL"
-  fi
-
-  run_optional_url_check "FTP_TEST" "$FTP_TEST_URL"
-  run_optional_url_check "SFTP_TEST" "$SFTP_TEST_URL" --insecure
-  run_optional_url_check "SCP_TEST" "$SCP_TEST_URL" --insecure
-  run_ws_check "WS_TEST" "$WS_TEST_URL"
+  parallel_pids=()
+  parallel_logs=()
+  # The groups are independent and each retains its detailed assertions. Four
+  # concurrent groups keeps the suite fast without overloading public services.
+  run_parallel_check http network_http_checks
+  run_parallel_check compression network_compression_checks
+  run_parallel_check ech network_ech_check
+  run_parallel_check cache network_cache_checks
+  run_parallel_check optional network_optional_checks
+  collect_parallel_checks
 fi
 
 printf '\nSummary: %d passed, %d failed, %d skipped\n' \
