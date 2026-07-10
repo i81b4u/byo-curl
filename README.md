@@ -22,7 +22,7 @@ On Ubuntu, the build script expects common build tooling such as:
 
 ```bash
 sudo apt install autoconf automake autopoint bison cmake flex gettext \
-  gengetopt git gperf libtool make perl pkg-config
+  gengetopt git gperf libtool make perl pkg-config byacc
 ```
 
 Docker is only needed for image packaging:
@@ -48,6 +48,36 @@ The script builds under `curl-build/`:
 - `curl-build/src` contains git checkouts.
 - `curl-build/build` contains out-of-tree build directories.
 - `curl-build/prefix` contains the final installed curl and dependencies.
+- `curl-build/state` contains cache keys for successfully completed components.
+- `curl-build/logs` contains one numbered log per fetch, patch, and build stage.
+
+### Build progress and logs
+
+The terminal reports the current numbered stage and, when attached to a
+terminal, displays a spinner. Full command output is redirected to the
+corresponding file in `curl-build/logs/`, keeping normal output concise while
+preserving configure and compiler diagnostics. On failure, the script reports
+the affected log and prints its final 40 lines.
+
+For example, inspect the curl build log with:
+
+```bash
+less curl-build/logs/17-building-curl.log
+```
+
+### Repeat builds
+
+Successful components are cached by their source revision, build flags,
+dependency cache keys, installation prefix, and the contents of
+`build-curl.sh`. An unchanged rerun reuses those components and avoids fetching
+an already available requested Git ref.
+
+Use these controls when a rebuild or source refresh is needed:
+
+```bash
+BUILD_CACHE=0 ./build-curl.sh       # rebuild every component
+REFRESH_SOURCES=1 ./build-curl.sh  # fetch existing source checkouts
+```
 
 The resulting binary is:
 
@@ -81,6 +111,19 @@ For local-only checks without public network requests:
 
 ```bash
 SKIP_NETWORK=1 ./test-curl.sh
+```
+
+The local-only mode reports each omitted network assertion as `SKIP`, so its
+summary still shows exactly which coverage was not run.
+
+Network checks are grouped by protocol area and run concurrently by default.
+`NETWORK_JOBS` limits how many groups can run at once; the default is `4` and
+`NETWORK_JOBS=1` runs them serially when diagnosing a service or constrained
+network. `PASS`, `FAIL`, and `SKIP` use green, red, and yellow status labels in
+an interactive terminal. Output redirected to a file remains plain text.
+
+```bash
+NETWORK_JOBS=1 ./test-curl.sh
 ```
 
 The smoke test confirms MIT Kerberos/GSS-API support is present, reported by
