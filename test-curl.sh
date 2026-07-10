@@ -462,6 +462,12 @@ strip_v() {
   printf '%s\n' "${value#v}"
 }
 
+openssl_runtime_version() {
+  # OpenSSL's Git tag is openssl-X.Y.Z, but curl reports OpenSSL/X.Y.Z.
+  local value="$1"
+  printf '%s\n' "${value#openssl-}"
+}
+
 openldap_version() {
   local value="$1"
   value="${value#OPENLDAP_REL_ENG_}"
@@ -472,7 +478,7 @@ check_pinned_versions() {
   local openssl nghttp2 nghttp3 ngtcp2 zlib cares brotli zstd libidn2 libpsl libssh openldap krb5
   # Keep expected dependency versions in one place by reading the defaults from
   # build-curl.sh instead of duplicating them in this test script.
-  openssl="$(pin_default OPENSSL_VERSION)"
+  openssl="$(openssl_runtime_version "$(pin_default OPENSSL_VERSION)")"
   nghttp2="$(strip_v "$(pin_default NGHTTP2_VERSION)")"
   nghttp3="$(strip_v "$(pin_default NGHTTP3_VERSION)")"
   ngtcp2="$(strip_v "$(pin_default NGTCP2_VERSION)")"
