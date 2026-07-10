@@ -13,7 +13,7 @@ ZLIB_VERSION="${ZLIB_VERSION:-v1.3.2}"
 CARES_VERSION="${CARES_VERSION:-v1.34.8}"
 BROTLI_VERSION="${BROTLI_VERSION:-v1.2.0}"
 ZSTD_VERSION="${ZSTD_VERSION:-v1.5.7}"
-LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-v1.4.2}"
+LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-1.4.2}"
 LIBIDN2_VERSION="${LIBIDN2_VERSION:-v2.3.8}"
 LIBPSL_VERSION="${LIBPSL_VERSION:-0.22.0}"
 LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.12.0}"
@@ -37,6 +37,8 @@ REFRESH_SOURCES="${REFRESH_SOURCES:-0}"
 # State holds cache keys; logs contain the complete output for each stage.
 STATE_DIR="$WORK_DIR/state"
 LOG_DIR="$WORK_DIR/logs"
+DOWNLOAD_DIR="$WORK_DIR/downloads"
+LIBUNISTRING_URL="${LIBUNISTRING_URL:-https://ftp.gnu.org/gnu/libunistring/libunistring-$LIBUNISTRING_VERSION.tar.gz}"
 TOTAL_STAGES=17
 stage_number=0
 
@@ -151,7 +153,7 @@ require_tools() {
   # These are host build tools, not curl runtime dependencies.
   local commands=(
     autoconf automake autoreconf cmake gengetopt git gperf libtoolize make
-    date perl pkg-config sed autopoint yacc awk sha256sum
+    date perl pkg-config sed autopoint yacc awk sha256sum tar
   )
   for cmd in "${commands[@]}"; do
     need_cmd "$cmd"
@@ -159,7 +161,7 @@ require_tools() {
 }
 
 prepare() {
-  mkdir -p "$SRC_DIR" "$BUILD_DIR" "$PREFIX" "$STATE_DIR" "$LOG_DIR"
+  mkdir -p "$SRC_DIR" "$BUILD_DIR" "$PREFIX" "$STATE_DIR" "$LOG_DIR" "$DOWNLOAD_DIR"
 }
 
 # Run one named build stage in the background so its complete output can be
@@ -224,11 +226,25 @@ component_state() {
 # A component key includes its source revision, build-affecting environment,
 # this script's content, and direct dependency keys. A script edit therefore
 # deliberately invalidates cached components for a conservative rebuild.
+source_identity() {
+  local name="$1"
+  local src="$SRC_DIR/$name"
+
+  if [[ -d "$src/.git" ]]; then
+    git -C "$src" rev-parse HEAD
+  elif [[ -f "$src/.source-archive" ]]; then
+    cat "$src/.source-archive"
+  else
+    printf 'missing source identity for %s\n' "$name" >&2
+    return 1
+  fi
+}
+
 component_key() {
   local name="$1"
   shift
   {
-    printf '%s\n' "source=$(git -C "$SRC_DIR/$name" rev-parse HEAD)"
+    printf '%s\n' "source=$(source_identity "$name")"
     printf '%s\n' "script=$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
     printf '%s\n' "prefix=$PREFIX" "cflags=$CFLAGS" "cxxflags=$CXXFLAGS"
     printf '%s\n' "cppflags=$CPPFLAGS" "ldflags=$LDFLAGS"
@@ -260,8 +276,9 @@ build_cached() {
   printf '%s\n' "$key" > "$state"
 }
 
-# Fetch all sources from git. Some projects need submodules because their build
-# system or test-disabled library build expects bundled helper files.
+# Fetch Git sources and the libunistring release archive. Some Git projects
+# need submodules because their build system or test-disabled library build
+# expects bundled helper files.
 fetch_sources() {
   clone_repo openssl "$OPENSSL_VERSION" https://github.com/openssl/openssl.git
   clone_repo nghttp2 "$NGHTTP2_VERSION" https://github.com/nghttp2/nghttp2.git
@@ -271,13 +288,58 @@ fetch_sources() {
   clone_repo c-ares "$CARES_VERSION" https://github.com/c-ares/c-ares.git
   clone_repo brotli "$BROTLI_VERSION" https://github.com/google/brotli.git
   clone_repo zstd "$ZSTD_VERSION" https://github.com/facebook/zstd.git
-  clone_repo libunistring "$LIBUNISTRING_VERSION" https://https.git.savannah.gnu.org/git/libunistring.git/
+  fetch_libunistring
   clone_repo libidn2 "$LIBIDN2_VERSION" https://github.com/libidn/libidn2.git
   clone_repo libpsl "$LIBPSL_VERSION" https://github.com/rockdaboot/libpsl.git yes
   clone_repo libssh "$LIBSSH_VERSION" https://git.libssh.org/projects/libssh.git
   clone_repo openldap "$OPENLDAP_VERSION" https://github.com/openldap/openldap.git
   clone_repo krb5 "$KRB5_VERSION" https://github.com/krb5/krb5.git
   clone_repo curl "$CURL_VERSION" https://github.com/curl/curl.git
+}
+
+download_file() {
+  local url="$1"
+  local destination="$2"
+  local temporary="$destination.part"
+
+  # Download to a sibling temporary file so an interrupted refresh never
+  # replaces the previously cached archive with a partial download.
+  rm -f "$temporary"
+  if command -v curl >/dev/null 2>&1; then
+    curl --fail --location --retry 3 --retry-delay 2 --output "$temporary" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget --tries=4 --waitretry=2 --output-document="$temporary" "$url"
+  else
+    printf 'Missing downloader: install curl or wget to fetch libunistring.\n' >&2
+    return 1
+  fi
+  mv "$temporary" "$destination"
+}
+
+# Keep libunistring on its GNU release archive. Its Git checkout needs a second
+# gnulib fetch and has caused timeout or incomplete-checkout failures in this
+# build. The archive contains the generated configure and gnulib files instead.
+fetch_libunistring() {
+  local archive="$DOWNLOAD_DIR/libunistring-$LIBUNISTRING_VERSION.tar.gz"
+  local extracted="$SRC_DIR/libunistring-$LIBUNISTRING_VERSION"
+  local src="$SRC_DIR/libunistring"
+  local source_id
+
+  if [[ ! -f "$archive" ]] || [[ "$REFRESH_SOURCES" == "1" ]]; then
+    log "Downloading libunistring $LIBUNISTRING_VERSION"
+    download_file "$LIBUNISTRING_URL" "$archive"
+  else
+    log "Using cached libunistring archive: $archive"
+  fi
+
+  source_id="url=$LIBUNISTRING_URL sha256=$(sha256sum "$archive" | awk '{print $1}')"
+  if [[ ! -f "$src/.source-archive" ]] || [[ "$(<"$src/.source-archive")" != "$source_id" ]]; then
+    log "Extracting libunistring $LIBUNISTRING_VERSION"
+    rm -rf "$src" "$extracted"
+    tar -xzf "$archive" -C "$SRC_DIR"
+    mv "$extracted" "$src"
+    printf '%s\n' "$source_id" > "$src/.source-archive"
+  fi
 }
 
 # OpenLDAP 2.6.13 still dereferences ASN1_STRING internals in this file.
@@ -336,7 +398,8 @@ apply_source_patches() {
 }
 
 build_openssl() {
-  log "Building OpenSSL $OPENSSL_VERSION"
+  local display_version="${OPENSSL_VERSION#openssl-}"
+  log "Building OpenSSL $display_version"
   (
     cd "$SRC_DIR/openssl"
     # OpenSSL builds in-tree. Clean generated files so reruns use the current
@@ -394,29 +457,16 @@ build_zstd() {
   make -C "$SRC_DIR/zstd/lib" -j"$JOBS" PREFIX="$PREFIX" install
 }
 
-# The libunistring release tarball includes generated gnulib/doc files. The git
-# checkout does not, so pull gnulib and build only the library/header subtree;
-# curl/libidn2 do not need libunistring's generated Texinfo documentation.
+# The release archive already includes generated configure and gnulib files.
+# Build only the library/header subtree because curl and libidn2 do not require
+# the Texinfo documentation.
 build_libunistring() {
   log "Building libunistring $LIBUNISTRING_VERSION"
   local src="$SRC_DIR/libunistring"
   local bld="$BUILD_DIR/libunistring"
 
-  (
-    cd "$src"
-    if [[ -x ./gitsub.sh && ! -d gnulib ]]; then
-      sed -i 's#git://git.savannah.gnu.org/gnulib.git#https://git.savannah.gnu.org/git/gnulib.git#' .gitmodules
-      ./gitsub.sh pull --depth 1 gnulib
-    fi
-  )
   rm -rf "$bld"
   mkdir -p "$bld"
-  (
-    cd "$src"
-    if [[ ! -x ./configure ]]; then
-      run_autogen_if_needed
-    fi
-  )
   (
     cd "$bld"
     "$src/configure" --prefix="$PREFIX" --disable-static

@@ -1,8 +1,8 @@
 # BYO curl build with OpenSSL 4, HTTP/2, and HTTP/3
 
-This directory contains scripts to build a custom curl from pinned upstream git
-tags, install it into a local prefix, and optionally package that prefix into a
-Docker runtime image.
+This directory contains scripts to build a custom curl from pinned upstream Git
+tags and a libunistring release archive, install it into a local prefix, and
+optionally package that prefix into a Docker runtime image.
 
 The resulting curl is built with OpenSSL 4, ECH/HTTPS RR, HTTP/2 via nghttp2,
 HTTP/3 via ngtcp2/nghttp3, c-ares, zlib, Brotli, zstd, libidn2, libpsl,
@@ -10,7 +10,7 @@ libssh, OpenLDAP, and MIT Kerberos/GSS-API.
 
 ## Files
 
-- `build-curl.sh` clones and builds curl plus all pinned dependencies.
+- `build-curl.sh` fetches and builds curl plus all pinned dependencies.
 - `test-curl.sh` runs post-build smoke tests against the built curl.
 - `build-docker-image.sh` packages the already-built prefix into a Docker image.
 - `Dockerfile` defines the runtime image used by `build-docker-image.sh`.
@@ -21,9 +21,12 @@ libssh, OpenLDAP, and MIT Kerberos/GSS-API.
 On Ubuntu, the build script expects common build tooling such as:
 
 ```bash
-sudo apt install autoconf automake autopoint bison cmake flex gettext \
+sudo apt install autoconf automake autopoint bison cmake curl flex gettext \
   gengetopt git gperf libtool make perl pkg-config byacc
 ```
+
+`curl` downloads the libunistring release archive; `wget` is also supported as
+a fallback.
 
 Docker is only needed for image packaging:
 
@@ -45,8 +48,9 @@ Run:
 
 The script builds under `curl-build/`:
 
-- `curl-build/src` contains git checkouts.
+- `curl-build/src` contains Git checkouts and extracted release sources.
 - `curl-build/build` contains out-of-tree build directories.
+- `curl-build/downloads` caches the libunistring release archive.
 - `curl-build/prefix` contains the final installed curl and dependencies.
 - `curl-build/state` contains cache keys for successfully completed components.
 - `curl-build/logs` contains one numbered log per fetch, patch, and build stage.
@@ -67,16 +71,16 @@ less curl-build/logs/17-building-curl.log
 
 ### Repeat builds
 
-Successful components are cached by their source revision, build flags,
+Successful components are cached by their source identity, build flags,
 dependency cache keys, installation prefix, and the contents of
 `build-curl.sh`. An unchanged rerun reuses those components and avoids fetching
-an already available requested Git ref.
+an already available requested Git ref or libunistring release archive.
 
 Use these controls when a rebuild or source refresh is needed:
 
 ```bash
 BUILD_CACHE=0 ./build-curl.sh       # rebuild every component
-REFRESH_SOURCES=1 ./build-curl.sh  # fetch existing source checkouts
+REFRESH_SOURCES=1 ./build-curl.sh  # refresh Git checkouts and the archive
 ```
 
 The resulting binary is:
@@ -267,9 +271,12 @@ OpenLDAP `OPENLDAP_REL_ENG_2_6_13` needs a small source edit for OpenSSL 4
 because it still dereferences opaque `ASN1_STRING` internals. The build script
 applies that edit before building OpenLDAP.
 
-The libunistring git checkout needs its `gnulib` checkout pulled before
-bootstrap. The script does this and then builds only the library/header subtree,
-so `texinfo` is not required.
+libunistring is intentionally downloaded from the official GNU release archive
+rather than cloned from Git. Its Git checkout requires a separate gnulib fetch,
+which has caused timeouts and incomplete checkouts. The archive contains the
+generated configure and gnulib files, so the build avoids that extra network
+dependency and still builds only the library/header subtree; `texinfo` is not
+required.
 
 MIT Kerberos is built from the `krb5-1.22.2-final` git tag. curl is configured
 with `--with-gssapi`, which enables GSS-API, Kerberos, and SPNEGO support.
