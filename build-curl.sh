@@ -554,7 +554,13 @@ build_krb5() {
       if [[ -x ./util/reconf ]]; then
         ./util/reconf
       else
-        autoreconf -fi
+        # The released krb5 tree carries its generated aclocal.m4.  Running
+        # autoreconf invokes aclocal first, which overwrites that file and
+        # breaks this version with newer Autoconf (as shipped by Arch).
+        # Run the generators separately so aclocal is not invoked.  Autoheader
+        # produces the config-header template required by configure.
+        autoheader
+        autoconf
       fi
     fi
   )

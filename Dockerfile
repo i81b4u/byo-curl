@@ -5,7 +5,8 @@ FROM ubuntu:26.04
 # base layer was built.
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+  # MIT Kerberos built on Arch links libkrb5support against libkeyutils.
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libkeyutils1 \
   # ubuntu:26.04 currently includes /usr/bin/pebble as an unowned Go binary.
   # This curl runtime image does not use it, and scanners report vulnerabilities
   # against it independently from the OS packages, so remove the extra surface.
