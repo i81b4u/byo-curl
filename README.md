@@ -202,8 +202,7 @@ CURL_BUILD_SUFFIX=i81b4u CURL_RELEASE_DATE=2026-06-08 ./build-curl.sh
 ## Docker image
 
 The following information lets you create your own dockerized version of
-byo-curl, but if you want you can also get a pre-built one here:  
-https://hub.docker.com/r/i81b4u/byo-curl
+byo-curl, but if you want you can also get a [pre-built](https://hub.docker.com/r/i81b4u/byo-curl) one.
 
 After `./build-curl.sh` has completed, build the runtime image:
 
