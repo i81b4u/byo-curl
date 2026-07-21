@@ -21,7 +21,7 @@ libssh, OpenLDAP, and MIT Kerberos/GSS-API.
 On Ubuntu, the build script expects common build tooling such as:
 
 ```bash
-sudo apt install autoconf automake autopoint bison cmake curl flex gettext \
+sudo apt install autoconf automake autopoint bison build-essential cmake curl flex gettext \
   gengetopt git gperf libtool make perl pkg-config byacc
 ```
 
@@ -200,6 +200,8 @@ CURL_BUILD_SUFFIX=i81b4u CURL_RELEASE_DATE=2026-06-08 ./build-curl.sh
 ```
 
 ## Docker image
+
+For a ready-to-run image, use the [published Docker Hub image](https://hub.docker.com/r/i81b4u/byo-curl).
 
 After `./build-curl.sh` has completed, build the runtime image:
 
