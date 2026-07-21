@@ -283,28 +283,28 @@ IMAGE_NAME=my-curl ./build-docker-image.sh
 
 ## Notes
 
-OpenLDAP `OPENLDAP_REL_ENG_2_6_13` needs a small source edit for OpenSSL 4
+- OpenLDAP `OPENLDAP_REL_ENG_2_6_13` needs a small source edit for OpenSSL 4
 because it still dereferences opaque `ASN1_STRING` internals. The build script
 applies that edit before building OpenLDAP.
 
-libunistring is intentionally downloaded from the official GNU release archive
+- libunistring is intentionally downloaded from the official GNU release archive
 rather than cloned from Git. Its Git checkout requires a separate gnulib fetch,
 which has caused timeouts and incomplete checkouts. The archive contains the
 generated configure and gnulib files, so the build avoids that extra network
 dependency and still builds only the library/header subtree; `texinfo` is not
 required.
 
-MIT Kerberos is built from the `krb5-1.22.2-final` git tag. curl is configured
+- MIT Kerberos is built from the `krb5-1.22.2-final` git tag. curl is configured
 with `--with-gssapi`, which enables GSS-API, Kerberos, and SPNEGO support.
 The smoke test verifies the build artifacts and runtime linkage for this support
 but leaves live realm authentication to the deployment environment.
 
-c-ares is built from the `v1.34.8` git tag. curl is configured with
+- c-ares is built from the `v1.34.8` git tag. curl is configured with
 `--enable-ares`, so `AsynchDNS` comes from c-ares instead of the POSIX threaded
 resolver. The smoke test exercises this at runtime with curl's `--dns-servers`
 option against Cloudflare DNS by default.
 
-RTMP/librtmp is intentionally not included. curl 8.20.0 removed RTMP support, so
+- RTMP/librtmp is intentionally not included. curl 8.20.0 removed RTMP support, so
 building librtmp would not make this curl support RTMP.
 
 ## Verified output
