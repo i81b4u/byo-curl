@@ -1,6 +1,8 @@
 *
 !Dockerfile
 !.dockerignore
+!test-curl.sh
+!build-curl.sh
 !curl-build/
 !curl-build/prefix/
 !curl-build/prefix/**

@@ -4,11 +4,30 @@ set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# When run from a checkout, test its local build.  The Docker image installs
+# this script in <prefix>/bin, so detect that layout as well.  This keeps the
+# normal local workflow unchanged while making the installed script runnable
+# without command-line path overrides.
+if [[ -x "$ROOT_DIR/curl-build/prefix/bin/curl" ]]; then
+  DEFAULT_PREFIX="$ROOT_DIR/curl-build/prefix"
+  DEFAULT_BUILD_CONFIG="$ROOT_DIR/build-curl.sh"
+elif [[ -x "$(dirname "$ROOT_DIR")/bin/curl" ]]; then
+  DEFAULT_PREFIX="$(dirname "$ROOT_DIR")"
+  DEFAULT_BUILD_CONFIG="$DEFAULT_PREFIX/share/byo-curl/build-curl.sh"
+elif [[ -x /opt/byo-curl/bin/curl ]]; then
+  DEFAULT_PREFIX="/opt/byo-curl"
+  DEFAULT_BUILD_CONFIG="$DEFAULT_PREFIX/share/byo-curl/build-curl.sh"
+else
+  DEFAULT_PREFIX="$ROOT_DIR/curl-build/prefix"
+  DEFAULT_BUILD_CONFIG="$ROOT_DIR/build-curl.sh"
+fi
+
 # The suite can test either the default local build prefix or explicit paths
 # supplied by CI, Docker, or a developer comparing another curl binary.
 CURL_BIN="${CURL_BIN:-}"
 CURL_CONFIG="${CURL_CONFIG:-}"
 PREFIX_DIR="${PREFIX_DIR:-}"
+BUILD_CONFIG="${BUILD_CONFIG:-$DEFAULT_BUILD_CONFIG}"
 TIMEOUT="${TIMEOUT:-20}"
 SKIP_NETWORK="${SKIP_NETWORK:-0}"
 SKIP_LDAP="${SKIP_LDAP:-0}"
@@ -118,9 +137,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CURL_BIN="${CURL_BIN:-$ROOT_DIR/curl-build/prefix/bin/curl}"
-CURL_CONFIG="${CURL_CONFIG:-$ROOT_DIR/curl-build/prefix/bin/curl-config}"
-PREFIX_DIR="${PREFIX_DIR:-$ROOT_DIR/curl-build/prefix}"
+CURL_BIN="${CURL_BIN:-$DEFAULT_PREFIX/bin/curl}"
+CURL_CONFIG="${CURL_CONFIG:-$DEFAULT_PREFIX/bin/curl-config}"
+PREFIX_DIR="${PREFIX_DIR:-$DEFAULT_PREFIX}"
 
 pass() {
   printf '%sPASS%s %s\n' "$green" "$reset" "$1"
@@ -454,7 +473,8 @@ pin_default() {
   # Read version defaults directly from build-curl.sh so the test expectations
   # stay aligned with the build script.
   local name="$1"
-  sed -n 's/^'"$name"'="${'"$name"':-\([^}]*\)}".*/\1/p' "$ROOT_DIR/build-curl.sh"
+  [[ -r "$BUILD_CONFIG" ]] || return 0
+  sed -n 's/^'"$name"'="${'"$name"':-\([^}]*\)}".*/\1/p' "$BUILD_CONFIG"
 }
 
 strip_v() {
@@ -505,7 +525,7 @@ check_pinned_versions() {
   done
 
   if [[ "$missing" == "1" ]]; then
-    skip "pinned dependency version checks" "could not read all defaults from build-curl.sh"
+    skip "pinned dependency version checks" "could not read all defaults from $BUILD_CONFIG"
     return
   fi
 
@@ -588,9 +608,17 @@ fi
 
 if target_has_command readelf; then
   # RUNPATH is what lets the built curl run from its prefix without requiring a
-  # user to export LD_LIBRARY_PATH manually.
+  # user to export LD_LIBRARY_PATH manually.  The Docker image relocates the
+  # prefix from the host build directory to /opt/byo-curl, so it supplies that
+  # directory through LD_LIBRARY_PATH instead.
   readelf_output="$(run_in_target readelf -d "$CURL_BIN" 2>&1)"
-  assert_contains "curl has prefix RUNPATH" "$readelf_output" "$PREFIX_DIR/lib"
+  if contains "$readelf_output" "$PREFIX_DIR/lib"; then
+    pass "curl has prefix RUNPATH"
+  elif contains ":${LD_LIBRARY_PATH:-}:" ":$PREFIX_DIR/lib:"; then
+    pass "curl loads prefix libraries via LD_LIBRARY_PATH"
+  else
+    fail "curl has prefix RUNPATH" "expected RUNPATH or LD_LIBRARY_PATH to contain: $PREFIX_DIR/lib"
+  fi
 else
   skip "RUNPATH check" "readelf is not available in target"
 fi
