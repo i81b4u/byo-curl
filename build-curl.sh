@@ -570,7 +570,7 @@ build_krb5() {
     # warnings into build failures with newer compilers. PKINIT is not needed
     # for curl's GSS-API/SPNEGO support and this pinned krb5 tag does not
     # compile that plugin against OpenSSL 4's opaque ASN.1 types.
-    WARN_CFLAGS= WARN_CXXFLAGS= "$src/configure" \
+    WARN_CFLAGS='' WARN_CXXFLAGS='' "$src/configure" \
       --prefix="$PREFIX" \
       --disable-static \
       --disable-pkinit \
