@@ -1,20 +1,20 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Do not use set -e here: the suite should report every failed check in one run.
-set -uo pipefail
+set -u
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # When run from a checkout, test its local build.  The Docker image installs
 # this script in <prefix>/bin, so detect that layout as well.  This keeps the
 # normal local workflow unchanged while making the installed script runnable
 # without command-line path overrides.
-if [[ -x "$ROOT_DIR/curl-build/prefix/bin/curl" ]]; then
+if [ -x "$ROOT_DIR/curl-build/prefix/bin/curl" ]; then
   DEFAULT_PREFIX="$ROOT_DIR/curl-build/prefix"
   DEFAULT_BUILD_CONFIG="$ROOT_DIR/build-curl.sh"
-elif [[ -x "$(dirname "$ROOT_DIR")/bin/curl" ]]; then
+elif [ -x "$(dirname "$ROOT_DIR")/bin/curl" ]; then
   DEFAULT_PREFIX="$(dirname "$ROOT_DIR")"
   DEFAULT_BUILD_CONFIG="$DEFAULT_PREFIX/share/byo-curl/build-curl.sh"
-elif [[ -x /opt/byo-curl/bin/curl ]]; then
+elif [ -x /opt/byo-curl/bin/curl ]; then
   DEFAULT_PREFIX="/opt/byo-curl"
   DEFAULT_BUILD_CONFIG="$DEFAULT_PREFIX/share/byo-curl/build-curl.sh"
 else
@@ -68,11 +68,11 @@ green=
 red=
 yellow=
 reset=
-if [[ -t 1 ]]; then
-  green=$'\033[32m'
-  red=$'\033[31m'
-  yellow=$'\033[33m'
-  reset=$'\033[0m'
+if [ -t 1 ]; then
+  green=$(printf '\033[32m')
+  red=$(printf '\033[31m')
+  yellow=$(printf '\033[33m')
+  reset=$(printf '\033[0m')
 fi
 
 usage() {
@@ -96,13 +96,13 @@ Useful environment variables:
 EOF
 }
 
-while [[ $# -gt 0 ]]; do
+while [ "$#" -gt 0 ]; do
   case "$1" in
     --local)
       shift
       ;;
     --curl-bin)
-      if [[ $# -lt 2 ]]; then
+      if [ "$#" -lt 2 ]; then
         printf 'Missing value for --curl-bin\n' >&2
         exit 2
       fi
@@ -110,7 +110,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --curl-config)
-      if [[ $# -lt 2 ]]; then
+      if [ "$#" -lt 2 ]; then
         printf 'Missing value for --curl-config\n' >&2
         exit 2
       fi
@@ -118,7 +118,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --prefix)
-      if [[ $# -lt 2 ]]; then
+      if [ "$#" -lt 2 ]; then
         printf 'Missing value for --prefix\n' >&2
         exit 2
       fi
@@ -142,71 +142,73 @@ CURL_CONFIG="${CURL_CONFIG:-$DEFAULT_PREFIX/bin/curl-config}"
 PREFIX_DIR="${PREFIX_DIR:-$DEFAULT_PREFIX}"
 
 pass() {
-  printf '%sPASS%s %s\n' "$green" "$reset" "$1"
+  if [ "${IN_PARALLEL:-0}" = 1 ]; then
+    printf 'PASS %s\n' "$1"
+  else
+    printf '%sPASS%s %s\n' "$green" "$reset" "$1"
+  fi
   pass_count=$((pass_count + 1))
 }
 
 fail() {
-  printf '%sFAIL%s %s\n' "$red" "$reset" "$1"
-  if [[ $# -gt 1 && -n "$2" ]]; then
+  if [ "${IN_PARALLEL:-0}" = 1 ]; then
+    printf 'FAIL %s\n' "$1"
+  else
+    printf '%sFAIL%s %s\n' "$red" "$reset" "$1"
+  fi
+  if [ "$#" -gt 1 ] && [ -n "$2" ]; then
     printf '     %s\n' "$2"
   fi
   fail_count=$((fail_count + 1))
 }
 
 skip() {
-  printf '%sSKIP%s %s\n' "$yellow" "$reset" "$1"
-  if [[ $# -gt 1 && -n "$2" ]]; then
+  if [ "${IN_PARALLEL:-0}" = 1 ]; then
+    printf 'SKIP %s\n' "$1"
+  else
+    printf '%sSKIP%s %s\n' "$yellow" "$reset" "$1"
+  fi
+  if [ "$#" -gt 1 ] && [ -n "$2" ]; then
     printf '     %s\n' "$2"
   fi
   skip_count=$((skip_count + 1))
 }
 
 require_file() {
-  local name="$1"
-  local path="$2"
+  require_file_name="$1"
+  require_file_path="$2"
 
-  if [[ -x "$path" ]]; then
-    pass "$name"
+  if [ -x "$require_file_path" ]; then
+    pass "$require_file_name"
   else
-    fail "$name" "missing executable: $path"
+    fail "$require_file_name" "missing executable: $require_file_path"
   fi
 }
 
 require_target_executable() {
-  local name="$1"
-  local path="$2"
-
-  require_file "$name" "$path"
+  require_file "$1" "$2"
 }
 
 contains() {
-  local text="$1"
-  local needle="$2"
-  [[ "$text" == *"$needle"* ]]
+  case "$1" in
+    *"$2"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 assert_contains() {
-  local name="$1"
-  local text="$2"
-  local needle="$3"
-
-  if contains "$text" "$needle"; then
-    pass "$name"
+  if contains "$2" "$3"; then
+    pass "$1"
   else
-    fail "$name" "expected to find: $needle"
+    fail "$1" "expected to find: $3"
   fi
 }
 
 assert_not_contains() {
-  local name="$1"
-  local text="$2"
-  local needle="$3"
-
-  if contains "$text" "$needle"; then
-    fail "$name" "unexpectedly found: $needle"
+  if contains "$2" "$3"; then
+    fail "$1" "unexpectedly found: $3"
   else
-    pass "$name"
+    pass "$1"
   fi
 }
 
@@ -224,165 +226,158 @@ run_curl() {
 }
 
 run_in_target() {
-  local entrypoint="$1"
+  entrypoint="$1"
   shift
 
   "$entrypoint" "$@"
 }
 
 target_has_command() {
-  local command_name="$1"
-
-  command -v "$command_name" >/dev/null 2>&1
+  command -v "$1" >/dev/null 2>&1
 }
 
 check_status_version() {
   # Fetch a URL and assert both a successful status code and the negotiated HTTP
   # version. This catches regressions where a protocol is compiled in but not
   # actually usable against a real endpoint.
-  local name="$1"
-  local expected_version="$2"
+  csv_name="$1"
+  csv_expected_version="$2"
   shift 2
-  local output
 
-  if output="$(curl_status_version "$@" 2>&1)"; then
-    local code="${output%% *}"
-    local version="${output#* }"
-    if [[ "$code" =~ ^2[0-9][0-9]$ && "$version" == "$expected_version" ]]; then
-      pass "$name"
+  if csv_output="$(curl_status_version "$@" 2>&1)"; then
+    csv_code=${csv_output%% *}
+    csv_version=${csv_output#* }
+    case "$csv_code" in
+      2[0-9][0-9]) csv_success=1 ;;
+      *) csv_success=0 ;;
+    esac
+    if [ "$csv_success" = 1 ] && [ "$csv_version" = "$csv_expected_version" ]; then
+      pass "$csv_name"
     else
-      fail "$name" "got HTTP $code over version $version"
+      fail "$csv_name" "got HTTP $csv_code over version $csv_version"
     fi
   else
-    fail "$name" "$output"
+    fail "$csv_name" "$csv_output"
   fi
 }
 
 run_text_check() {
   # Use for checks where curl's response body or trace output should contain a
   # small stable marker.
-  local name="$1"
-  local needle="$2"
+  rtc_name="$1"
+  rtc_needle="$2"
   shift 2
-  local output
 
-  if output="$(curl_capture "$@" 2>&1)"; then
-    if contains "$output" "$needle"; then
-      pass "$name"
+  if rtc_output="$(curl_capture "$@" 2>&1)"; then
+    if contains "$rtc_output" "$rtc_needle"; then
+      pass "$rtc_name"
     else
-      fail "$name" "response did not contain: $needle"
+      fail "$rtc_name" "response did not contain: $rtc_needle"
     fi
   else
-    fail "$name" "$output"
+    fail "$rtc_name" "$rtc_output"
   fi
 }
 
 run_optional_url_check() {
   # Protocol checks such as FTP/SFTP/SCP are useful but endpoint-dependent. A
   # caller can set the URL to an empty string to skip a single protocol.
-  local name="$1"
-  local url="$2"
+  rouc_name="$1"
+  rouc_url="$2"
   shift 2
 
-  if [[ -z "$url" ]]; then
-    skip "$name" "set ${name}_URL or the documented protocol-specific variable to enable"
+  if [ -z "$rouc_url" ]; then
+    skip "$rouc_name" "set ${rouc_name}_URL or the documented protocol-specific variable to enable"
     return
   fi
 
-  local output
-  if output="$(curl_capture "$@" --output /dev/null "$url" 2>&1)"; then
-    pass "$name"
+  if rouc_output="$(curl_capture "$@" --output /dev/null "$rouc_url" 2>&1)"; then
+    pass "$rouc_name"
   else
-    fail "$name" "$output"
+    fail "$rouc_name" "$rouc_output"
   fi
 }
 
 run_header_check() {
   # Header-based checks are used for content negotiation so the body does not
   # need to be downloaded or parsed.
-  local name="$1"
-  local needle="$2"
+  rhc_name="$1"
+  rhc_needle="$2"
   shift 2
-  local headers_file="$tmpdir/${name//[^A-Za-z0-9_]/_}.headers"
-  local output
+  rhc_safe_name=$(printf '%s' "$rhc_name" | tr -c '[:alnum:]_' '_')
+  rhc_headers_file="$tmpdir/$rhc_safe_name.headers"
 
-  if output="$(curl_capture --dump-header "$headers_file" --output /dev/null "$@" 2>&1)"; then
-    if grep -qi "$needle" "$headers_file"; then
-      pass "$name"
+  if rhc_output="$(curl_capture --dump-header "$rhc_headers_file" --output /dev/null "$@" 2>&1)"; then
+    if grep -qi "$rhc_needle" "$rhc_headers_file"; then
+      pass "$rhc_name"
     else
-      fail "$name" "response headers did not contain: $needle"
+      fail "$rhc_name" "response headers did not contain: $rhc_needle"
     fi
   else
-    fail "$name" "$output"
+    fail "$rhc_name" "$rhc_output"
   fi
 }
 
 run_ws_check() {
   # The public websocket endpoint keeps the connection open long enough for curl
   # to hit the timeout after receiving a server banner. Treat that as success.
-  local name="$1"
-  local url="$2"
-  local output rc
+  rws_name="$1"
+  rws_url="$2"
 
-  output="$(run_curl --silent --show-error --max-time 5 "$url" 2>&1)"
-  rc=$?
-  if [[ $rc -eq 0 ]]; then
-    pass "$name"
-  elif [[ $rc -eq 28 && "$output" == *"Request served by"* ]]; then
-    pass "$name"
+  rws_output="$(run_curl --silent --show-error --max-time 5 "$rws_url" 2>&1)"
+  rws_rc=$?
+  if [ "$rws_rc" -eq 0 ]; then
+    pass "$rws_name"
+  elif [ "$rws_rc" -eq 28 ] && contains "$rws_output" 'Request served by'; then
+    pass "$rws_name"
   else
-    fail "$name" "$output"
+    fail "$rws_name" "$rws_output"
   fi
 }
 
 run_parallel_check() {
-  local name="$1"
+  rpc_name="$1"
   shift
   # Wait for the current batch before starting another so NETWORK_JOBS is a
   # strict upper bound without losing the output needed for the final summary.
-  if (( ${#parallel_pids[@]} >= NETWORK_JOBS )); then
+  if [ "$parallel_count" -ge "$NETWORK_JOBS" ]; then
     collect_parallel_checks
-    parallel_pids=()
-    parallel_logs=()
+    parallel_pids=
+    parallel_logs=
+    parallel_count=0
   fi
   # Child output is collected from a file, so keep it free of terminal escape
   # sequences. The collector uses the PASS/FAIL/SKIP prefix to update totals.
-  (
-    green=
-    red=
-    yellow=
-    reset=
-    "$@"
-  ) >"$tmpdir/$name.log" 2>&1 &
-  parallel_pids+=("$!")
-  parallel_logs+=("$tmpdir/$name.log")
+  (IN_PARALLEL=1 "$@") >"$tmpdir/$rpc_name.log" 2>&1 &
+  parallel_pids="$parallel_pids $!"
+  parallel_logs="$parallel_logs $tmpdir/$rpc_name.log"
+  parallel_count=$((parallel_count + 1))
 }
 
 collect_parallel_checks() {
-  local pid log line
   # Functions run in background subshells, so their counter updates do not
   # reach this shell. Rebuild those totals from their plain-text result logs.
-  for pid in "${parallel_pids[@]}"; do
-    wait "$pid" || true
+  for cpc_pid in $parallel_pids; do
+    wait "$cpc_pid" || :
   done
-  for log in "${parallel_logs[@]}"; do
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      case "$line" in
+  for cpc_log in $parallel_logs; do
+    while IFS= read -r cpc_line || [ -n "$cpc_line" ]; do
+      case "$cpc_line" in
         PASS\ *)
-          printf '%sPASS%s%s\n' "$green" "$reset" "${line#PASS}"
+          printf '%sPASS%s%s\n' "$green" "$reset" "${cpc_line#PASS}"
           pass_count=$((pass_count + 1))
           ;;
         FAIL\ *)
-          printf '%sFAIL%s%s\n' "$red" "$reset" "${line#FAIL}"
+          printf '%sFAIL%s%s\n' "$red" "$reset" "${cpc_line#FAIL}"
           fail_count=$((fail_count + 1))
           ;;
         SKIP\ *)
-          printf '%sSKIP%s%s\n' "$yellow" "$reset" "${line#SKIP}"
+          printf '%sSKIP%s%s\n' "$yellow" "$reset" "${cpc_line#SKIP}"
           skip_count=$((skip_count + 1))
           ;;
-        *) printf '%s\n' "$line" ;;
+        *) printf '%s\n' "$cpc_line" ;;
       esac
-    done <"$log"
+    done <"$cpc_log"
   done
 }
 
@@ -404,10 +399,9 @@ network_compression_checks() {
 }
 
 network_ech_check() {
-  local ech_output ech_rc
   ech_output="$(curl_capture --tlsv1.3 --ech hard --doh-url "$DOH_URL" "$ECH_URL" 2>&1)"
   ech_rc=$?
-  if [[ $ech_rc -eq 0 ]]; then
+  if [ "$ech_rc" -eq 0 ]; then
     assert_contains "ECH encrypts SNI" "$ech_output" 'sni=encrypted'
     assert_contains "ECH endpoint used TLS 1.3" "$ech_output" 'tls=TLSv1.3'
   else
@@ -416,9 +410,8 @@ network_ech_check() {
 }
 
 network_cache_checks() {
-  local hsts_file alt_svc_file
   hsts_file="$TEST_TMPDIR/hsts.txt"
-  if curl_capture --hsts "$hsts_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 && [[ -s "$hsts_file" ]]; then
+  if curl_capture --hsts "$hsts_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 && [ -s "$hsts_file" ]; then
     pass "HSTS cache file populated"
   else
     fail "HSTS cache file populated" "no HSTS data written to $hsts_file"
@@ -433,7 +426,7 @@ network_cache_checks() {
 }
 
 network_optional_checks() {
-  if [[ "$SKIP_LDAP" == "1" ]]; then
+  if [ "$SKIP_LDAP" = "1" ]; then
     skip "LDAPS query" "SKIP_LDAP=1"
   else
     run_text_check "LDAPS query" 'DN: uid=joey,ou=users,dc=debian,dc=org' "$LDAPS_URL"
@@ -447,8 +440,7 @@ network_optional_checks() {
 skip_network_checks() {
   # Keep local-only output aligned with the full suite: every assertion that
   # would make a public request gets its own explicit skipped result.
-  local name
-  for name in \
+  for skip_name in \
     "HTTPS over HTTP/1.1" \
     "HTTPS over HTTP/2" \
     "HTTPS over HTTP/3" \
@@ -465,90 +457,85 @@ skip_network_checks() {
     "SFTP_TEST" \
     "SCP_TEST" \
     "WS_TEST"; do
-    skip "$name"
+    skip "$skip_name"
   done
 }
 
 pin_default() {
   # Read version defaults directly from build-curl.sh so the test expectations
   # stay aligned with the build script.
-  local name="$1"
-  [[ -r "$BUILD_CONFIG" ]] || return 0
-  sed -n 's/^'"$name"'="${'"$name"':-\([^}]*\)}".*/\1/p' "$BUILD_CONFIG"
+  pin_name="$1"
+  [ -r "$BUILD_CONFIG" ] || return 0
+  sed -n 's/^'"$pin_name"'="${'"$pin_name"':-\([^}]*\)}".*/\1/p' "$BUILD_CONFIG"
 }
 
 strip_v() {
-  local value="$1"
-  printf '%s\n' "${value#v}"
+  printf '%s\n' "${1#v}"
 }
 
 openssl_runtime_version() {
   # OpenSSL's Git tag is openssl-X.Y.Z, but curl reports OpenSSL/X.Y.Z.
-  local value="$1"
-  printf '%s\n' "${value#openssl-}"
+  printf '%s\n' "${1#openssl-}"
 }
 
 openldap_version() {
-  local value="$1"
-  value="${value#OPENLDAP_REL_ENG_}"
-  printf '%s\n' "${value//_/.}"
+  olv_value=${1#OPENLDAP_REL_ENG_}
+  printf '%s\n' "$olv_value" | tr '_' '.'
 }
 
 check_pinned_versions() {
-  local openssl nghttp2 nghttp3 ngtcp2 zlib cares brotli zstd libidn2 libpsl libssh openldap krb5
   # Keep expected dependency versions in one place by reading the defaults from
   # build-curl.sh instead of duplicating them in this test script.
-  openssl="$(openssl_runtime_version "$(pin_default OPENSSL_VERSION)")"
-  nghttp2="$(strip_v "$(pin_default NGHTTP2_VERSION)")"
-  nghttp3="$(strip_v "$(pin_default NGHTTP3_VERSION)")"
-  ngtcp2="$(strip_v "$(pin_default NGTCP2_VERSION)")"
-  zlib="$(strip_v "$(pin_default ZLIB_VERSION)")"
-  cares="$(strip_v "$(pin_default CARES_VERSION)")"
-  brotli="$(strip_v "$(pin_default BROTLI_VERSION)")"
-  zstd="$(strip_v "$(pin_default ZSTD_VERSION)")"
-  libidn2="$(strip_v "$(pin_default LIBIDN2_VERSION)")"
-  libpsl="$(pin_default LIBPSL_VERSION)"
-  libssh="$(pin_default LIBSSH_VERSION)"
-  libssh="${libssh#libssh-}"
-  openldap="$(openldap_version "$(pin_default OPENLDAP_VERSION)")"
-  krb5="$(pin_default KRB5_VERSION)"
-  krb5="${krb5#krb5-}"
-  krb5="${krb5%-final}"
+  cpv_openssl="$(openssl_runtime_version "$(pin_default OPENSSL_VERSION)")"
+  cpv_nghttp2="$(strip_v "$(pin_default NGHTTP2_VERSION)")"
+  cpv_nghttp3="$(strip_v "$(pin_default NGHTTP3_VERSION)")"
+  cpv_ngtcp2="$(strip_v "$(pin_default NGTCP2_VERSION)")"
+  cpv_zlib="$(strip_v "$(pin_default ZLIB_VERSION)")"
+  cpv_cares="$(strip_v "$(pin_default CARES_VERSION)")"
+  cpv_brotli="$(strip_v "$(pin_default BROTLI_VERSION)")"
+  cpv_zstd="$(strip_v "$(pin_default ZSTD_VERSION)")"
+  cpv_libidn2="$(strip_v "$(pin_default LIBIDN2_VERSION)")"
+  cpv_libpsl="$(pin_default LIBPSL_VERSION)"
+  cpv_libssh="$(pin_default LIBSSH_VERSION)"
+  cpv_libssh="${cpv_libssh#libssh-}"
+  cpv_openldap="$(openldap_version "$(pin_default OPENLDAP_VERSION)")"
+  cpv_krb5="$(pin_default KRB5_VERSION)"
+  cpv_krb5="${cpv_krb5#krb5-}"
+  cpv_krb5="${cpv_krb5%-final}"
 
-  local missing=0
-  for value in "$openssl" "$nghttp2" "$nghttp3" "$ngtcp2" "$zlib" \
-               "$cares" "$brotli" "$zstd" "$libidn2" "$libpsl" \
-               "$libssh" "$openldap" "$krb5"; do
-    if [[ -z "$value" ]]; then
-      missing=1
+  cpv_missing=0
+  for cpv_value in "$cpv_openssl" "$cpv_nghttp2" "$cpv_nghttp3" "$cpv_ngtcp2" "$cpv_zlib" \
+                   "$cpv_cares" "$cpv_brotli" "$cpv_zstd" "$cpv_libidn2" "$cpv_libpsl" \
+                   "$cpv_libssh" "$cpv_openldap" "$cpv_krb5"; do
+    if [ -z "$cpv_value" ]; then
+      cpv_missing=1
     fi
   done
 
-  if [[ "$missing" == "1" ]]; then
+  if [ "$cpv_missing" = "1" ]; then
     skip "pinned dependency version checks" "could not read all defaults from $BUILD_CONFIG"
     return
   fi
 
   for needle in \
-    "OpenSSL/$openssl" \
-    "zlib/$zlib" \
-    "c-ares/$cares" \
-    "brotli/$brotli" \
-    "zstd/$zstd" \
-    "libidn2/$libidn2" \
-    "libpsl/$libpsl" \
-    "libssh/$libssh" \
-    "nghttp2/$nghttp2" \
-    "ngtcp2/$ngtcp2" \
-    "nghttp3/$nghttp3" \
-    "OpenLDAP/$openldap"; do
+    "OpenSSL/$cpv_openssl" \
+    "zlib/$cpv_zlib" \
+    "c-ares/$cpv_cares" \
+    "brotli/$cpv_brotli" \
+    "zstd/$cpv_zstd" \
+    "libidn2/$cpv_libidn2" \
+    "libpsl/$cpv_libpsl" \
+    "libssh/$cpv_libssh" \
+    "nghttp2/$cpv_nghttp2" \
+    "ngtcp2/$cpv_ngtcp2" \
+    "nghttp3/$cpv_nghttp3" \
+    "OpenLDAP/$cpv_openldap"; do
     assert_contains "version reports $needle" "$version_output" "$needle"
   done
 
-  if [[ -x "$PREFIX_DIR/bin/krb5-config" ]]; then
-    local krb5_output
-    krb5_output="$(run_in_target "$PREFIX_DIR/bin/krb5-config" --version 2>&1)"
-    assert_contains "krb5-config reports $krb5" "$krb5_output" "$krb5"
+  if [ -x "$PREFIX_DIR/bin/krb5-config" ]; then
+    cpv_krb5_output="$(run_in_target "$PREFIX_DIR/bin/krb5-config" --version 2>&1)"
+    assert_contains "krb5-config reports $cpv_krb5" "$cpv_krb5_output" "$cpv_krb5"
   else
     fail "krb5-config exists" "missing executable: $PREFIX_DIR/bin/krb5-config"
   fi
@@ -559,7 +546,7 @@ printf 'Testing curl binary: %s\n\n' "$CURL_BIN"
 require_target_executable "curl binary exists" "$CURL_BIN"
 require_target_executable "curl-config exists" "$CURL_CONFIG"
 
-if [[ ! -x "$CURL_BIN" ]]; then
+if [ ! -x "$CURL_BIN" ]; then
   printf '\nCannot continue without a curl binary.\n' >&2
   exit 1
 fi
@@ -570,7 +557,7 @@ config_protocols="$(run_in_target "$CURL_CONFIG" --protocols 2>/dev/null || true
 
 printf '%s\n\n' "$version_output"
 
-if [[ "$CHECK_PINNED_VERSIONS" == "1" ]]; then
+if [ "$CHECK_PINNED_VERSIONS" = "1" ]; then
   # These checks prove the expected libraries were compiled into this curl, not
   # merely that a feature name appeared in curl-config output.
   check_pinned_versions
@@ -583,11 +570,15 @@ assert_not_contains "version does not report libssh2" "$version_output" 'libssh2
 
 # curl-config and curl --version use slightly different formats, so check both.
 for feature in ECH GSS-API HTTP2 HTTP3 HTTPSRR IDN Kerberos PSL SPNEGO SSL brotli zstd; do
-  assert_contains "feature $feature enabled" "$config_features"$'\n'"$version_output" "$feature"
+  config_and_version="$config_features
+$version_output"
+  assert_contains "feature $feature enabled" "$config_and_version" "$feature"
 done
 
 for protocol in http https ldap ldaps scp sftp ws wss; do
-  assert_contains "protocol $protocol enabled" "$config_protocols"$'\n'"$version_output" "$protocol"
+  config_and_version="$config_protocols
+$version_output"
+  assert_contains "protocol $protocol enabled" "$config_and_version" "$protocol"
 done
 
 if target_has_command ldd; then
@@ -623,17 +614,28 @@ else
   skip "RUNPATH check" "readelf is not available in target"
 fi
 
-if [[ "$SKIP_NETWORK" == "1" ]]; then
+if [ "$SKIP_NETWORK" = "1" ]; then
   skip_network_checks
 else
   # Network checks exercise protocol behavior that cannot be proven from
   # --version output alone.
-  if [[ ! "$NETWORK_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  case "$NETWORK_JOBS" in
+    ''|*[!0-9]*) network_jobs_valid=0 ;;
+    *)
+      if [ "$NETWORK_JOBS" -gt 0 ]; then
+        network_jobs_valid=1
+      else
+        network_jobs_valid=0
+      fi
+      ;;
+  esac
+  if [ "$network_jobs_valid" -ne 1 ]; then
     printf 'NETWORK_JOBS must be a positive integer: %s\n' "$NETWORK_JOBS" >&2
     exit 2
   fi
-  parallel_pids=()
-  parallel_logs=()
+  parallel_pids=
+  parallel_logs=
+  parallel_count=0
   # The groups are independent and each retains its detailed assertions. Four
   # concurrent groups keeps the suite fast without overloading public services.
   run_parallel_check http network_http_checks
@@ -647,6 +649,6 @@ fi
 printf '\nSummary: %d passed, %d failed, %d skipped\n' \
   "$pass_count" "$fail_count" "$skip_count"
 
-if [[ "$fail_count" -gt 0 ]]; then
+if [ "$fail_count" -gt 0 ]; then
   exit 1
 fi
