@@ -492,6 +492,7 @@ build_libpsl() {
     --disable-gtk-doc \
     --disable-man \
     --disable-runtime \
+    --disable-nls \
     --enable-builtin=libidn2 \
     --with-libidn2
 }
