@@ -5,9 +5,9 @@ set -Eeuo pipefail
 # naming convention expected by their repositories. Every value can be
 # overridden from the environment when testing a newer dependency.
 OPENSSL_VERSION="${OPENSSL_VERSION:-openssl-4.0.1}"
-NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.69.0}"
-NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.17.0}"
-NGTCP2_VERSION="${NGTCP2_VERSION:-v1.24.0}"
+NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.70.0}"
+NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.18.0}"
+NGTCP2_VERSION="${NGTCP2_VERSION:-v1.25.0}"
 CURL_VERSION="${CURL_VERSION:-curl-8_21_0}"
 ZLIB_VERSION="${ZLIB_VERSION:-v1.3.2}"
 CARES_VERSION="${CARES_VERSION:-v1.34.8}"
@@ -15,9 +15,9 @@ BROTLI_VERSION="${BROTLI_VERSION:-v1.2.0}"
 ZSTD_VERSION="${ZSTD_VERSION:-v1.5.7}"
 LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-1.4.2}"
 LIBIDN2_VERSION="${LIBIDN2_VERSION:-v2.3.8}"
-LIBPSL_VERSION="${LIBPSL_VERSION:-0.23.0}"
-LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.12.1}"
-OPENLDAP_VERSION="${OPENLDAP_VERSION:-OPENLDAP_REL_ENG_2_6_13}"
+LIBPSL_VERSION="${LIBPSL_VERSION:-0.23.2}"
+LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.12.2}"
+OPENLDAP_VERSION="${OPENLDAP_VERSION:-OPENLDAP_REL_ENG_2_7_0}"
 KRB5_VERSION="${KRB5_VERSION:-krb5-1.22.2-final}"
 CURL_BUILD_SUFFIX="${CURL_BUILD_SUFFIX:-i81b4u}"
 CURL_RELEASE_DATE="${CURL_RELEASE_DATE:-$(date +%Y-%m-%d)}"
@@ -291,7 +291,7 @@ fetch_sources() {
   fetch_libunistring
   clone_repo libidn2 "$LIBIDN2_VERSION" https://github.com/libidn/libidn2.git
   clone_repo libpsl "$LIBPSL_VERSION" https://github.com/rockdaboot/libpsl.git yes
-  clone_repo libssh "$LIBSSH_VERSION" https://git.libssh.org/projects/libssh.git
+  clone_repo libssh "$LIBSSH_VERSION" https://gitlab.com/libssh/libssh-mirror.git
   clone_repo openldap "$OPENLDAP_VERSION" https://github.com/openldap/openldap.git
   clone_repo krb5 "$KRB5_VERSION" https://github.com/krb5/krb5.git
   clone_repo curl "$CURL_VERSION" https://github.com/curl/curl.git
