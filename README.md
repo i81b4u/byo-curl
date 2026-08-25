@@ -283,7 +283,7 @@ IMAGE_NAME=my-curl ./build-docker-image.sh
 
 ## Notes
 
-- OpenLDAP `OPENLDAP_REL_ENG_2_6_13` needs a small source edit for OpenSSL 4
+- OpenLDAP `OPENLDAP_REL_ENG_2_7_0` needs a small source edit for OpenSSL 4
 because it still dereferences opaque `ASN1_STRING` internals. The build script
 applies that edit before building OpenLDAP.
 
@@ -312,6 +312,6 @@ building librtmp would not make this curl support RTMP.
 A successful build should report features similar to:
 
 ```text
-curl 8.21.0-i81b4u ... OpenSSL/4.0.1 ... c-ares/1.34.8 ... nghttp2/1.69.0 ngtcp2/1.24.0 nghttp3/1.17.0 ...
+curl 8.21.0-i81b4u ... OpenSSL/4.0.2 ... c-ares/1.34.8 ... nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0 ...
 Features: alt-svc AsynchDNS brotli ECH GSS-API HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Kerberos Largefile libz PSL SPNEGO SSL threadsafe TLS-SRP UnixSockets zstd
 ```
