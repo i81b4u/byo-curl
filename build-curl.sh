@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # Pinned upstream versions. Most are git tags; OpenSSL and curl use the tag
 # naming convention expected by their repositories. Every value can be
 # overridden from the environment when testing a newer dependency.
-OPENSSL_VERSION="${OPENSSL_VERSION:-openssl-4.0.1}"
+OPENSSL_VERSION="${OPENSSL_VERSION:-openssl-4.0.2}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.70.0}"
 NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.18.0}"
 NGTCP2_VERSION="${NGTCP2_VERSION:-v1.25.0}"
@@ -15,7 +15,7 @@ BROTLI_VERSION="${BROTLI_VERSION:-v1.2.0}"
 ZSTD_VERSION="${ZSTD_VERSION:-v1.5.7}"
 LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-1.4.2}"
 LIBIDN2_VERSION="${LIBIDN2_VERSION:-v2.3.8}"
-LIBPSL_VERSION="${LIBPSL_VERSION:-0.23.2}"
+LIBPSL_VERSION="${LIBPSL_VERSION:-0.23.3}"
 LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.12.2}"
 OPENLDAP_VERSION="${OPENLDAP_VERSION:-OPENLDAP_REL_ENG_2_7_0}"
 KRB5_VERSION="${KRB5_VERSION:-krb5-1.22.2-final}"
