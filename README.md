@@ -192,7 +192,7 @@ CURL_BUILD_SUFFIX=mybuild ./build-curl.sh
 WORK_DIR="$PWD/out" PREFIX="$PWD/out/prefix" ./build-curl.sh
 ```
 
-The default curl version stamp is `8.21.0-i81b4u`, and the release date defaults
+The default curl version stamp is `8.22.0-i81b4u`, and the release date defaults
 to the build date. Override both like this:
 
 ```bash
@@ -212,7 +212,7 @@ After `./build-curl.sh` has completed, build the runtime image:
 The helper tags the image with the curl version and `latest`, for example:
 
 ```text
-byo-curl:8.21.0-i81b4u
+byo-curl:8.22.0-i81b4u
 byo-curl:latest
 ```
 
@@ -312,6 +312,6 @@ building librtmp would not make this curl support RTMP.
 A successful build should report features similar to:
 
 ```text
-curl 8.21.0-i81b4u ... OpenSSL/4.0.2 ... c-ares/1.34.8 ... nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0 ...
+curl 8.22.0-i81b4u ... OpenSSL/4.0.2 ... c-ares/1.34.8 ... nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0 ...
 Features: alt-svc AsynchDNS brotli ECH GSS-API HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Kerberos Largefile libz PSL SPNEGO SSL threadsafe TLS-SRP UnixSockets zstd
 ```
