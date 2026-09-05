@@ -50,10 +50,10 @@ LDAPS_URL="${LDAPS_URL:-ldaps://db.debian.org/uid=joey,ou=users,dc=debian,dc=org
 
 # Optional protocol endpoints. Emptying one of these variables skips that
 # protocol-specific check without disabling all network tests.
-FTP_TEST_URL="${FTP_TEST_URL:-ftp://demo:password@test.rebex.net/}"
-SFTP_TEST_URL="${SFTP_TEST_URL:-sftp://demo:password@test.rebex.net/}"
-SCP_TEST_URL="${SCP_TEST_URL:-scp://demo:password@test.rebex.net/readme.txt}"
-WS_TEST_URL="${WS_TEST_URL:-wss://echo.websocket.org/}"
+FTP_TEST_URL="${FTP_TEST_URL-ftp://demo:password@test.rebex.net/}"
+SFTP_TEST_URL="${SFTP_TEST_URL-sftp://demo:password@test.rebex.net/}"
+SCP_TEST_URL="${SCP_TEST_URL-scp://demo:password@test.rebex.net/readme.txt}"
+WS_TEST_URL="${WS_TEST_URL-wss://echo.websocket.org/}"
 
 pass_count=0
 fail_count=0
@@ -324,6 +324,11 @@ run_ws_check() {
   rws_name="$1"
   rws_url="$2"
 
+  if [ -z "$rws_url" ]; then
+    skip "$rws_name" "set WS_TEST_URL to enable"
+    return
+  fi
+
   rws_output="$(run_curl --silent --show-error --max-time 5 "$rws_url" 2>&1)"
   rws_rc=$?
   if [ "$rws_rc" -eq 0 ]; then
@@ -411,7 +416,7 @@ network_ech_check() {
 
 network_cache_checks() {
   hsts_file="$TEST_TMPDIR/hsts.txt"
-  if curl_capture --hsts "$hsts_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 && [ -s "$hsts_file" ]; then
+  if curl_capture --hsts "$hsts_file" --output /dev/null "$HTTP2_URL" >/dev/null 2>&1 && grep -Eq '^[[:space:]]*[^#[:space:]]' "$hsts_file"; then
     pass "HSTS cache file populated"
   else
     fail "HSTS cache file populated" "no HSTS data written to $hsts_file"
