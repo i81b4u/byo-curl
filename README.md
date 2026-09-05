@@ -22,7 +22,7 @@ On Ubuntu, the build script expects common build tooling such as:
 
 ```bash
 sudo apt install autoconf automake autopoint bison build-essential cmake curl flex gettext \
-  gengetopt git gperf libtool make perl pkg-config byacc
+  gengetopt git gperf libtool make perl pkg-config python3 byacc
 ```
 
 `curl` downloads the libunistring release archive; `wget` is also supported as
@@ -72,9 +72,14 @@ less curl-build/logs/17-building-curl.log
 ### Repeat builds
 
 Successful components are cached by their source identity, build flags,
-dependency cache keys, installation prefix, and the contents of
-`build-curl.sh`. An unchanged rerun reuses those components and avoids fetching
-an already available requested Git ref or libunistring release archive.
+dependency cache keys, installation prefix, curl version stamp/date, and the
+contents of `build-curl.sh`. An unchanged rerun reuses those components and avoids fetching
+an already available requested Git ref or libunistring release archive. The
+default release date changes daily, so curl itself rebuilds on a later date.
+Set a fixed `CURL_RELEASE_DATE` to keep that metadata stable. Compiler/tool
+versions and arbitrary source edits are not tracked; use a fresh `WORK_DIR`
+and prefix when changing toolchains or diagnosing an upgrade with stale
+generated files.
 
 Use these controls when a rebuild or source refresh is needed:
 
@@ -108,7 +113,8 @@ After a build, run the smoke test suite:
 
 The script checks the compiled dependency versions against `build-curl.sh`,
 enabled protocols and features, runtime library linkage, HTTP/1.1, HTTP/2,
-HTTP/3, c-ares DNS server override support, gzip, Brotli, zstd negotiation,
+HTTP/3, c-ares DNS server override support, gzip/Brotli negotiation, zstd
+advertisement in Accept-Encoding,
 ECH, HSTS, Alt-Svc, LDAPS, FTP, SFTP, SCP, and WSS.
 
 For local-only checks without public network requests:
@@ -116,6 +122,10 @@ For local-only checks without public network requests:
 ```bash
 SKIP_NETWORK=1 ./test-curl.sh
 ```
+
+When building with dependency version overrides, use
+`CHECK_PINNED_VERSIONS=0 ./test-curl.sh` to skip comparisons against the script
+defaults. Other enabled checks still run.
 
 The local-only mode reports each omitted network assertion as `SKIP`, so its
 summary still shows exactly which coverage was not run.
@@ -153,6 +163,10 @@ SCP_TEST_URL=scp://user@example.test/path \
 WS_TEST_URL=wss://example.test/socket \
 ./test-curl.sh
 ```
+
+Set an optional endpoint to an empty string (for example, `WS_TEST_URL=`) to
+skip that protocol check. SSH smoke tests use `--insecure` and therefore do
+not verify the server host key.
 
 ## Test ECH
 
@@ -193,13 +207,19 @@ WORK_DIR="$PWD/out" PREFIX="$PWD/out/prefix" ./build-curl.sh
 ```
 
 The default curl version stamp is `8.22.0-i81b4u`, and the release date defaults
-to the build date. Override both like this:
+to the build date. The numeric version comes from the selected curl source.
+Override the suffix and date like this:
 
 ```bash
 CURL_BUILD_SUFFIX=i81b4u CURL_RELEASE_DATE=2026-06-08 ./build-curl.sh
 ```
 
 ## Docker image
+
+The Docker build context always packages `curl-build/prefix/`. If you override
+`WORK_DIR` or `PREFIX`, copy the completed prefix there before packaging;
+`CURL_BIN` only selects the binary used to derive the image tag. Build on a
+host whose architecture and system libraries are compatible with Ubuntu 26.04.
 
 For a ready-to-run image, use the [published Docker Hub image](https://hub.docker.com/r/i81b4u/byo-curl).
 
@@ -250,7 +270,7 @@ Run an HTTP/3 and MLKEM test on www.cloudflare.com:
 
 ```bash
 docker run --rm byo-curl:latest \
-  --silent --head --tlsv1.3 --curves X25519MLKEM768 --http3 \
+  --silent --head --tlsv1.3 --curves X25519MLKEM768 --http3-only \
   https://www.cloudflare.com
 ```
 
@@ -283,9 +303,11 @@ IMAGE_NAME=my-curl ./build-docker-image.sh
 
 ## Notes
 
-- OpenLDAP `OPENLDAP_REL_ENG_2_7_0` needs a small source edit for OpenSSL 4
-because it still dereferences opaque `ASN1_STRING` internals. The build script
-applies that edit before building OpenLDAP.
+- OpenLDAP `OPENLDAP_REL_ENG_2_7_0` already uses public ASN.1 accessors. For
+older version overrides such as 2.6.13, the build script replaces direct CN
+structure access with `ASN1_STRING_get0_data()` and `ASN1_STRING_length()`.
+These callers only read the certificate data; the patch also upgrades sources
+previously patched with `ASN1_STRING_data()`.
 
 - libunistring is intentionally downloaded from the official GNU release archive
 rather than cloned from Git. Its Git checkout requires a separate gnulib fetch,
@@ -307,11 +329,11 @@ option against Cloudflare DNS by default.
 - RTMP/librtmp is intentionally not included. curl 8.20.0 removed RTMP support, so
 building librtmp would not make this curl support RTMP.
 
-## Verified output
+## Expected output
 
 A successful build should report features similar to:
 
 ```text
 curl 8.22.0-i81b4u ... OpenSSL/4.0.2 ... c-ares/1.34.8 ... nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0 ...
-Features: alt-svc AsynchDNS brotli ECH GSS-API HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Kerberos Largefile libz PSL SPNEGO SSL threadsafe TLS-SRP UnixSockets zstd
+Features: alt-svc AsynchDNS brotli ECH GSS-API HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Kerberos Largefile libz PSL SPNEGO SSL threadsafe UnixSockets zstd
 ```

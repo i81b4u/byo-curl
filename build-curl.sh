@@ -30,8 +30,9 @@ SRC_DIR="$WORK_DIR/src"
 BUILD_DIR="$WORK_DIR/build"
 PREFIX="${PREFIX:-$WORK_DIR/prefix}"
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}"
-# Reuse completed components only when all inputs that affect their output are
-# unchanged. REFRESH_SOURCES opts into a network refresh of existing checkouts.
+# Reuse completed components when their recorded source, flags, dependencies,
+# and build settings are unchanged. REFRESH_SOURCES opts into a network
+# refresh of existing checkouts.
 BUILD_CACHE="${BUILD_CACHE:-1}"
 REFRESH_SOURCES="${REFRESH_SOURCES:-0}"
 # State holds cache keys; logs contain the complete output for each stage.
@@ -63,8 +64,8 @@ need_cmd() {
   }
 }
 
-# Clone a shallow checkout at the requested tag/branch. Existing checkouts are
-# refreshed to the requested revision instead of recloned.
+# Clone a shallow checkout at the requested tag/branch. Existing checkouts use
+# the local ref unless it is missing or REFRESH_SOURCES=1 requests a fetch.
 clone_repo() {
   local name="$1"
   local branch="$2"
@@ -153,7 +154,7 @@ require_tools() {
   # These are host build tools, not curl runtime dependencies.
   local commands=(
     autoconf automake autoreconf cmake gengetopt git gperf libtoolize make
-    date perl pkg-config sed autopoint yacc awk sha256sum tar
+    date perl pkg-config sed autopoint yacc awk sha256sum tar python3
   )
   for cmd in "${commands[@]}"; do
     need_cmd "$cmd"
@@ -248,6 +249,9 @@ component_key() {
     printf '%s\n' "script=$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
     printf '%s\n' "prefix=$PREFIX" "cflags=$CFLAGS" "cxxflags=$CXXFLAGS"
     printf '%s\n' "cppflags=$CPPFLAGS" "ldflags=$LDFLAGS"
+    if [[ "$name" == "curl" ]]; then
+      printf '%s\n' "suffix=$CURL_BUILD_SUFFIX" "release_date=$CURL_RELEASE_DATE"
+    fi
     local dependency
     for dependency in "$@"; do
       printf '%s=' "$dependency"
@@ -342,26 +346,28 @@ fetch_libunistring() {
   fi
 }
 
-# OpenLDAP 2.6.13 still dereferences ASN1_STRING internals in this file.
-# OpenSSL 4 makes that type opaque, so switch the affected CN checks to the
-# public accessor functions before building.
+# Older OpenLDAP overrides (including 2.6.13) dereference ASN1_STRING
+# internals. The pinned 2.7.0 already uses accessors and needs no patch.
+# CN checks only compare/index/log the bytes, so use the const accessor.
 patch_openldap() {
   local file="$SRC_DIR/openldap/libraries/libldap/tls_o.c"
 
-  if ! grep -q 'cn->length' "$file"; then
+  if ! grep -Eq 'cn->(length|data)|ASN1_STRING_data\( cn \)' "$file"; then
     return
   fi
 
   log "Patching OpenLDAP for OpenSSL 4 ASN1_STRING accessors"
   perl -0pi -e '
     s/cn->length/ASN1_STRING_length( cn )/g;
-    s/cn->data/ASN1_STRING_data( cn )/g;
-    s/&ASN1_STRING_data\( cn \)\[1\]/ASN1_STRING_data( cn ) + 1/g;
+    s/cn->data/ASN1_STRING_get0_data( cn )/g;
+    s/ASN1_STRING_data\( cn \)/ASN1_STRING_get0_data( cn )/g;
+    s/&ASN1_STRING_get0_data\( cn \)\[1\]/(ASN1_STRING_get0_data( cn ) + 1)/g;
+    s/\(char \*\) (\(?ASN1_STRING_get0_data\( cn \))/(const char *) $1/g;
   ' "$file"
 }
 
-# The curl git tag reports itself as 8.21.0-DEV and "[unreleased]". Stamp the
-# local build so --version and User-Agent identify this custom binary clearly.
+# Git source headers may carry a -DEV suffix and "[unreleased]" timestamp.
+# Stamp the local build using the header's numeric version and custom metadata.
 patch_curl_version() {
   local header="$SRC_DIR/curl/include/curl/curlver.h"
   local major minor patch base_version stamped_version
@@ -489,12 +495,10 @@ build_libpsl() {
   # libpsl lets curl reason about public suffix boundaries for cookies and
   # related host policy decisions. Use the bundled public suffix data.
   autotools_build libpsl \
-    --disable-gtk-doc \
     --disable-man \
     --disable-runtime \
     --disable-nls \
-    --enable-builtin=libidn2 \
-    --with-libidn2
+    --enable-builtin
 }
 
 build_nghttp2() {
@@ -511,8 +515,7 @@ build_nghttp3() {
   # nghttp3 is the HTTP/3 layer used by ngtcp2.
   cmake_build nghttp3 \
     -DBUILD_SHARED_LIBS=ON \
-    -DENABLE_LIB_ONLY=ON \
-    -DENABLE_DOC=OFF
+    -DENABLE_LIB_ONLY=ON
 }
 
 build_ngtcp2() {
@@ -523,10 +526,10 @@ build_ngtcp2() {
     --enable-lib-only \
     --with-openssl="$PREFIX" \
     --with-libnghttp3="$PREFIX" \
-    --disable-gnutls \
-    --disable-wolfssl \
-    --disable-boringssl \
-    --disable-picotls
+    --without-gnutls \
+    --without-wolfssl \
+    --without-boringssl \
+    --without-picotls
 }
 
 build_libssh() {
@@ -536,7 +539,10 @@ build_libssh() {
   cmake_build libssh \
     -DBUILD_SHARED_LIBS=ON \
     -DWITH_EXAMPLES=OFF \
-    -DWITH_TESTING=OFF \
+    -DUNIT_TESTING=OFF \
+    -DCLIENT_TESTING=OFF \
+    -DSERVER_TESTING=OFF \
+    -DGSSAPI_TESTING=OFF \
     -DWITH_GSSAPI=ON \
     -DOPENSSL_ROOT_DIR="$PREFIX"
 }
@@ -646,7 +652,7 @@ main() {
   run_stage "Patching sources" apply_source_patches
 
   # Build dependency order matters: ngtcp2 needs OpenSSL/nghttp3, libidn2 needs
-  # libunistring, libpsl uses libidn2, libssh can use krb5, and curl consumes
+  # libunistring, libssh uses OpenSSL/krb5/zlib, and curl consumes
   # the full prefix.
   run_stage "Building OpenSSL" build_cached openssl "$PREFIX/lib64/libssl.so" build_openssl
   run_stage "Building zlib" build_cached zlib "$PREFIX/lib/libz.so" build_zlib
@@ -655,12 +661,12 @@ main() {
   run_stage "Building zstd" build_cached zstd "$PREFIX/lib/libzstd.so" build_zstd
   run_stage "Building libunistring" build_cached libunistring "$PREFIX/lib/libunistring.so" build_libunistring
   run_stage "Building libidn2" build_cached libidn2 "$PREFIX/lib/libidn2.so" build_libidn2 libunistring
-  run_stage "Building libpsl" build_cached libpsl "$PREFIX/lib/libpsl.so" build_libpsl libidn2
+  run_stage "Building libpsl" build_cached libpsl "$PREFIX/lib/libpsl.so" build_libpsl
   run_stage "Building nghttp2" build_cached nghttp2 "$PREFIX/lib/libnghttp2.so" build_nghttp2
   run_stage "Building nghttp3" build_cached nghttp3 "$PREFIX/lib/libnghttp3.so" build_nghttp3
   run_stage "Building ngtcp2" build_cached ngtcp2 "$PREFIX/lib/libngtcp2.so" build_ngtcp2 openssl nghttp3
   run_stage "Building MIT Kerberos" build_cached krb5 "$PREFIX/lib/libkrb5.so" build_krb5 openssl
-  run_stage "Building libssh" build_cached libssh "$PREFIX/lib/libssh.so" build_libssh openssl krb5
+  run_stage "Building libssh" build_cached libssh "$PREFIX/lib/libssh.so" build_libssh openssl krb5 zlib
   run_stage "Building OpenLDAP" build_cached openldap "$PREFIX/lib/libldap.so" build_openldap openssl
   run_stage "Building curl" build_cached curl "$PREFIX/bin/curl" build_curl \
     openssl zlib c-ares brotli zstd libidn2 libpsl nghttp2 nghttp3 ngtcp2 krb5 libssh openldap
