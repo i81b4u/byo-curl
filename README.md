@@ -292,7 +292,7 @@ docker run --rm -it --entrypoint /bin/bash byo-curl:latest
 Start smoke test script inside the runtime image:
 
 ```bash
-docker run --rm --entrypoint /opt/byo-curl/bin/test-curl.sh i81b4u/byo-curl:latest
+docker run --rm --entrypoint /opt/byo-curl/bin/test-curl.sh byo-curl:latest
 ```
 
 To change the Docker image name:
