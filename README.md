@@ -334,6 +334,6 @@ building librtmp would not make this curl support RTMP.
 A successful build should report features similar to:
 
 ```text
-curl 8.22.0-i81b4u ... OpenSSL/4.0.2 ... c-ares/1.34.8 ... nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0 ...
+curl 8.22.0-i81b4u ... OpenSSL/4.0.3 ... c-ares/1.34.8 ... nghttp2/1.70.0 ngtcp2/1.25.0 nghttp3/1.18.0 ...
 Features: alt-svc AsynchDNS brotli ECH GSS-API HSTS HTTP2 HTTP3 HTTPS-proxy HTTPSRR IDN IPv6 Kerberos Largefile libz PSL SPNEGO SSL threadsafe UnixSockets zstd
 ```
