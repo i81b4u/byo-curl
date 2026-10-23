@@ -4,26 +4,26 @@ set -Eeuo pipefail
 # Pinned upstream versions. Most are git tags; OpenSSL and curl use the tag
 # naming convention expected by their repositories. Every value can be
 # overridden from the environment when testing a newer dependency.
-OPENSSL_VERSION="${OPENSSL_VERSION:-openssl-4.0.3}"
+OPENSSL_VERSION="${OPENSSL_VERSION:-openssl-4.1.0}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.70.0}"
 NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.18.0}"
 NGTCP2_VERSION="${NGTCP2_VERSION:-v1.25.0}"
-CURL_VERSION="${CURL_VERSION:-curl-8_22_0}"
+CURL_VERSION="${CURL_VERSION:-curl-8_23_0}"
 ZLIB_VERSION="${ZLIB_VERSION:-v1.3.2}"
-CARES_VERSION="${CARES_VERSION:-v1.34.8}"
-BROTLI_VERSION="${BROTLI_VERSION:-v1.2.0}"
+CARES_VERSION="${CARES_VERSION:-v1.34.9}"
+BROTLI_VERSION="${BROTLI_VERSION:-v1.2.1}"
 ZSTD_VERSION="${ZSTD_VERSION:-v1.5.7}"
-LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-1.4.2}"
+LIBUNISTRING_VERSION="${LIBUNISTRING_VERSION:-1.5}"
 LIBIDN2_VERSION="${LIBIDN2_VERSION:-v2.3.8}"
 LIBPSL_VERSION="${LIBPSL_VERSION:-0.23.3}"
 LIBSSH_VERSION="${LIBSSH_VERSION:-libssh-0.12.2}"
-OPENLDAP_VERSION="${OPENLDAP_VERSION:-OPENLDAP_REL_ENG_2_7_1}"
+OPENLDAP_VERSION="${OPENLDAP_VERSION:-OPENLDAP_REL_ENG_2_7_2}"
 KRB5_VERSION="${KRB5_VERSION:-krb5-1.22.2-final}"
 CURL_BUILD_SUFFIX="${CURL_BUILD_SUFFIX:-i81b4u}"
 CURL_RELEASE_DATE="${CURL_RELEASE_DATE:-$(date +%Y-%m-%d)}"
 
-# Everything is built below WORK_DIR. Sources, out-of-tree builds, and the
-# final install prefix stay separate so a failed build can be inspected.
+# Sources, build directories, logs, and cache state live below WORK_DIR.
+# The install prefix defaults to WORK_DIR/prefix and can be set independently.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK_DIR="${WORK_DIR:-$ROOT_DIR/curl-build}"
 SRC_DIR="$WORK_DIR/src"
@@ -347,7 +347,7 @@ fetch_libunistring() {
 }
 
 # Older OpenLDAP overrides (including 2.6.13) dereference ASN1_STRING
-# internals. The pinned 2.7.0 already uses accessors and needs no patch.
+# internals. The pinned 2.7.2 already uses accessors and needs no patch.
 # CN checks only compare/index/log the bytes, so use the const accessor.
 patch_openldap() {
   local file="$SRC_DIR/openldap/libraries/libldap/tls_o.c"
@@ -535,7 +535,7 @@ build_ngtcp2() {
 build_libssh() {
   log "Building libssh $LIBSSH_VERSION"
   # libssh provides curl's SCP/SFTP protocols. WITH_GSSAPI makes SSH
-  # authentication able to use the MIT Kerberos libraries built below.
+  # authentication able to use MIT Kerberos, built before libssh in main().
   cmake_build libssh \
     -DBUILD_SHARED_LIBS=ON \
     -DWITH_EXAMPLES=OFF \

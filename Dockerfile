@@ -1,15 +1,13 @@
 FROM ubuntu:26.04
 
-# Refresh the base image packages before installing runtime data. This keeps the
-# image from carrying fixable CVEs that were patched after the published Ubuntu
-# base layer was built.
+# Refresh base packages to pick up available updates before installing runtime
+# tools, CA certificates, and the host-built Kerberos library dependency.
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-  # MIT Kerberos built on Arch links libkrb5support against libkeyutils.
+  # Host-built MIT Kerberos may link libkrb5support against libkeyutils.
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bash binutils ca-certificates libkeyutils1 \
-  # ubuntu:26.04 currently includes /usr/bin/pebble as an unowned Go binary.
-  # This curl runtime image does not use it, and scanners report vulnerabilities
-  # against it independently from the OS packages, so remove the extra surface.
+  # Remove Pebble and its data if present in the base image; this curl runtime
+  # does not use them.
   && rm -f /usr/bin/pebble \
   && rm -rf /var/lib/pebble \
   && rm -rf /var/lib/apt/lists/*
@@ -17,7 +15,7 @@ RUN apt-get update \
 # build-curl.sh installs curl and every custom dependency here on the host.
 COPY curl-build/prefix/ /opt/byo-curl/
 # Keep the installed smoke test self-contained.  build-curl.sh is copied only
-# as version metadata for the test; it is not run in this runtime image.
+# as fallback version metadata when no build manifest is present; it is not run.
 COPY test-curl.sh /opt/byo-curl/bin/test-curl.sh
 COPY build-curl.sh /opt/byo-curl/share/byo-curl/build-curl.sh
 RUN chmod 0755 /opt/byo-curl/bin/test-curl.sh

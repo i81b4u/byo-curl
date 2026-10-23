@@ -59,8 +59,17 @@ pass_count=0
 fail_count=0
 skip_count=0
 
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
+tmpdir="$(mktemp -d)" || {
+  printf 'Unable to create temporary directory with mktemp.\n' >&2
+  exit 1
+}
+cleanup() {
+  rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 129' HUP
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 TEST_TMPDIR="$tmpdir"
 
 # Keep output readable in terminals while leaving logs plain in non-TTY runs.
@@ -81,16 +90,21 @@ Usage:
   ./test-curl.sh [--local] [--curl-bin PATH] [--curl-config PATH] [--prefix PATH]
 
 Options:
-  --local             Test the local build prefix. This is the default.
+  --local             Use local execution (the default, including in Docker).
   --curl-bin PATH     Local curl binary to test.
   --curl-config PATH  Local curl-config binary to test.
-  --prefix PATH       Local install prefix for linkage checks.
+  --prefix PATH       Prefix for linkage/manifest checks; does not set binaries.
   --help              Show this help text.
 
 Useful environment variables:
   SKIP_NETWORK=1      Run only local metadata/linkage checks.
   SKIP_LDAP=1         Skip the public LDAPS query.
-  TIMEOUT=20          Per-request timeout in seconds.
+  TIMEOUT=20          Per-request timeout; WebSocket checks always use 5 seconds.
+  NETWORK_JOBS=4      Maximum concurrent network-check groups.
+  CHECK_PINNED_VERSIONS=0
+                      Skip curl/libcurl and dependency version comparisons.
+  BUILD_MANIFEST=PATH Resolved versions; defaults to PREFIX/share/byo-curl/build-manifest.
+  BUILD_CONFIG=PATH   Build-script defaults used when no manifest is available.
   CARES_DNS_SERVER=1.1.1.1
                       DNS server used by the c-ares runtime check.
 EOF
@@ -140,6 +154,7 @@ done
 CURL_BIN="${CURL_BIN:-$DEFAULT_PREFIX/bin/curl}"
 CURL_CONFIG="${CURL_CONFIG:-$DEFAULT_PREFIX/bin/curl-config}"
 PREFIX_DIR="${PREFIX_DIR:-$DEFAULT_PREFIX}"
+BUILD_MANIFEST="${BUILD_MANIFEST:-$PREFIX_DIR/share/byo-curl/build-manifest}"
 
 pass() {
   if [ "${IN_PARALLEL:-0}" = 1 ]; then
@@ -209,6 +224,18 @@ assert_not_contains() {
     fail "$1" "unexpectedly found: $3"
   else
     pass "$1"
+  fi
+}
+
+contains_exact_line() {
+  printf '%s\n' "$1" | grep -F -x -- "$2" >/dev/null 2>&1
+}
+
+assert_exact_entry() {
+  if contains_exact_line "$2" "$3"; then
+    pass "$1"
+  else
+    fail "$1" "expected exact entry: $3"
   fi
 }
 
@@ -299,8 +326,7 @@ run_optional_url_check() {
 }
 
 run_header_check() {
-  # Header-based checks are used for content negotiation so the body does not
-  # need to be downloaded or parsed.
+  # Inspect negotiation headers and discard the downloaded response body.
   rhc_name="$1"
   rhc_needle="$2"
   shift 2
@@ -399,16 +425,35 @@ network_compression_checks() {
     --compressed --header 'Accept-Encoding: gzip' "$COMPRESSION_URL"
   run_header_check "Brotli negotiation" '^content-encoding: br' \
     --compressed --header 'Accept-Encoding: br' "$COMPRESSION_URL"
-  run_text_check "zstd advertised in Accept-Encoding" 'Accept-Encoding: deflate, gzip, br, zstd' \
-    --trace-ascii - --compressed --output /dev/null "$COMPRESSION_URL"
+  zstd_trace="$(curl_capture --trace-ascii - --compressed --output /dev/null "$COMPRESSION_URL" 2>&1)"
+  zstd_rc=$?
+  if [ "$zstd_rc" -ne 0 ]; then
+    fail "zstd Accept-Encoding request" "$zstd_trace"
+    return
+  fi
+  zstd_tokens="$(printf '%s\n' "$zstd_trace" \
+    | sed -n 's/.*Accept-Encoding:[[:space:]]*//p' \
+    | head -n 1 \
+    | tr ',' '\n' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  if [ -z "$zstd_tokens" ]; then
+    fail "zstd Accept-Encoding header" "header not present in curl trace"
+    return
+  fi
+  for zstd_token in deflate gzip br zstd; do
+    assert_exact_entry "zstd Accept-Encoding includes $zstd_token" "$zstd_tokens" "$zstd_token"
+  done
 }
 
 network_ech_check() {
-  ech_output="$(curl_capture --tlsv1.3 --ech hard --doh-url "$DOH_URL" "$ECH_URL" 2>&1)"
+  # Test the handshake, independently of the endpoint's HTTP status/body.
+  # Discard the body so it cannot supply a false success marker. These
+  # diagnostics are emitted by this custom curl's OpenSSL backend.
+  ech_output="$(curl_capture --verbose --output /dev/null --tlsv1.3 --ech hard --doh-url "$DOH_URL" "$ECH_URL" 2>&1)"
   ech_rc=$?
   if [ "$ech_rc" -eq 0 ]; then
-    assert_contains "ECH encrypts SNI" "$ech_output" 'sni=encrypted'
-    assert_contains "ECH endpoint used TLS 1.3" "$ech_output" 'tls=TLSv1.3'
+    assert_contains "ECH encrypts SNI" "$ech_output" "* ECH: result 'succeeded' ("
+    assert_contains "ECH endpoint used TLS 1.3" "$ech_output" '* SSL connection using TLSv1.3 /'
   else
     fail "ECH request" "$ech_output"
   fi
@@ -452,7 +497,10 @@ skip_network_checks() {
     "c-ares DNS server override" \
     "gzip negotiation" \
     "Brotli negotiation" \
-    "zstd advertised in Accept-Encoding" \
+    "zstd Accept-Encoding includes deflate" \
+    "zstd Accept-Encoding includes gzip" \
+    "zstd Accept-Encoding includes br" \
+    "zstd Accept-Encoding includes zstd" \
     "ECH encrypts SNI" \
     "ECH endpoint used TLS 1.3" \
     "HSTS cache file populated" \
@@ -466,12 +514,15 @@ skip_network_checks() {
   done
 }
 
-pin_default() {
-  # Read version defaults directly from build-curl.sh so the test expectations
-  # stay aligned with the build script.
-  pin_name="$1"
-  [ -r "$BUILD_CONFIG" ] || return 0
-  sed -n 's/^'"$pin_name"'="${'"$pin_name"':-\([^}]*\)}".*/\1/p' "$BUILD_CONFIG"
+manifest_value() {
+  manifest_name="$1"
+  if [ -r "$BUILD_MANIFEST" ]; then
+    sed -n 's/^'"$manifest_name"'=//p' "$BUILD_MANIFEST" | head -n 1
+  elif [ -r "$BUILD_CONFIG" ]; then
+    # This repository's build does not yet emit a manifest. Retain its
+    # default-version checks, including curl's version and build suffix.
+    sed -n 's/^'"$manifest_name"'="${'"$manifest_name"':-\([^}]*\)}".*/\1/p' "$BUILD_CONFIG"
+  fi
 }
 
 strip_v() {
@@ -489,27 +540,35 @@ openldap_version() {
 }
 
 check_pinned_versions() {
-  # Keep expected dependency versions in one place by reading the defaults from
-  # build-curl.sh instead of duplicating them in this test script.
-  cpv_openssl="$(openssl_runtime_version "$(pin_default OPENSSL_VERSION)")"
-  cpv_nghttp2="$(strip_v "$(pin_default NGHTTP2_VERSION)")"
-  cpv_nghttp3="$(strip_v "$(pin_default NGHTTP3_VERSION)")"
-  cpv_ngtcp2="$(strip_v "$(pin_default NGTCP2_VERSION)")"
-  cpv_zlib="$(strip_v "$(pin_default ZLIB_VERSION)")"
-  cpv_cares="$(strip_v "$(pin_default CARES_VERSION)")"
-  cpv_brotli="$(strip_v "$(pin_default BROTLI_VERSION)")"
-  cpv_zstd="$(strip_v "$(pin_default ZSTD_VERSION)")"
-  cpv_libidn2="$(strip_v "$(pin_default LIBIDN2_VERSION)")"
-  cpv_libpsl="$(pin_default LIBPSL_VERSION)"
-  cpv_libssh="$(pin_default LIBSSH_VERSION)"
+  # Prefer resolved build versions when available; otherwise use this
+  # repository's build-script defaults.
+  if [ ! -r "$BUILD_MANIFEST" ] && [ ! -r "$BUILD_CONFIG" ]; then
+    fail "build version metadata exists" "missing manifest: $BUILD_MANIFEST and build config: $BUILD_CONFIG"
+    return
+  fi
+
+  cpv_curl="$(manifest_value CURL_VERSION)"
+  cpv_curl="$(printf '%s\n' "${cpv_curl#curl-}" | tr '_' '.')"
+  cpv_curl_suffix="$(manifest_value CURL_BUILD_SUFFIX)"
+  cpv_openssl="$(openssl_runtime_version "$(manifest_value OPENSSL_VERSION)")"
+  cpv_nghttp2="$(strip_v "$(manifest_value NGHTTP2_VERSION)")"
+  cpv_nghttp3="$(strip_v "$(manifest_value NGHTTP3_VERSION)")"
+  cpv_ngtcp2="$(strip_v "$(manifest_value NGTCP2_VERSION)")"
+  cpv_zlib="$(strip_v "$(manifest_value ZLIB_VERSION)")"
+  cpv_cares="$(strip_v "$(manifest_value CARES_VERSION)")"
+  cpv_brotli="$(strip_v "$(manifest_value BROTLI_VERSION)")"
+  cpv_zstd="$(strip_v "$(manifest_value ZSTD_VERSION)")"
+  cpv_libidn2="$(strip_v "$(manifest_value LIBIDN2_VERSION)")"
+  cpv_libpsl="$(manifest_value LIBPSL_VERSION)"
+  cpv_libssh="$(manifest_value LIBSSH_VERSION)"
   cpv_libssh="${cpv_libssh#libssh-}"
-  cpv_openldap="$(openldap_version "$(pin_default OPENLDAP_VERSION)")"
-  cpv_krb5="$(pin_default KRB5_VERSION)"
+  cpv_openldap="$(openldap_version "$(manifest_value OPENLDAP_VERSION)")"
+  cpv_krb5="$(manifest_value KRB5_VERSION)"
   cpv_krb5="${cpv_krb5#krb5-}"
   cpv_krb5="${cpv_krb5%-final}"
 
   cpv_missing=0
-  for cpv_value in "$cpv_openssl" "$cpv_nghttp2" "$cpv_nghttp3" "$cpv_ngtcp2" "$cpv_zlib" \
+  for cpv_value in "$cpv_curl" "$cpv_curl_suffix" "$cpv_openssl" "$cpv_nghttp2" "$cpv_nghttp3" "$cpv_ngtcp2" "$cpv_zlib" \
                    "$cpv_cares" "$cpv_brotli" "$cpv_zstd" "$cpv_libidn2" "$cpv_libpsl" \
                    "$cpv_libssh" "$cpv_openldap" "$cpv_krb5"; do
     if [ -z "$cpv_value" ]; then
@@ -518,9 +577,17 @@ check_pinned_versions() {
   done
 
   if [ "$cpv_missing" = "1" ]; then
-    skip "pinned dependency version checks" "could not read all defaults from $BUILD_CONFIG"
+    fail "build metadata has dependency versions" "could not read all versions from $BUILD_MANIFEST or $BUILD_CONFIG"
     return
   fi
+
+  # Match complete version tokens so a wrong patch version or build suffix
+  # cannot pass merely because it starts with the expected version.
+  cpv_curl_expected="$cpv_curl-$cpv_curl_suffix"
+  cpv_curl_actual="$(printf '%s\n' "$version_output" | awk 'NR == 1 && $1 == "curl" { print $2 }')"
+  cpv_version_tokens="$(printf '%s\n' "$version_output" | head -n 1 | tr ' ' '\n')"
+  assert_exact_entry "curl version matches $cpv_curl_expected" "$cpv_curl_actual" "$cpv_curl_expected"
+  assert_exact_entry "libcurl version matches $cpv_curl_expected" "$cpv_version_tokens" "libcurl/$cpv_curl_expected"
 
   for needle in \
     "OpenSSL/$cpv_openssl" \
@@ -557,8 +624,21 @@ if [ ! -x "$CURL_BIN" ]; then
 fi
 
 version_output="$(run_curl --version 2>&1)"
-config_features="$(run_in_target "$CURL_CONFIG" --features 2>/dev/null || true)"
-config_protocols="$(run_in_target "$CURL_CONFIG" --protocols 2>/dev/null || true)"
+config_features="$(run_in_target "$CURL_CONFIG" --features 2>&1)"
+config_features_rc=$?
+if [ "$config_features_rc" -ne 0 ]; then
+  fail "curl-config --features" "$config_features"
+fi
+config_protocols_raw="$(run_in_target "$CURL_CONFIG" --protocols 2>&1)"
+config_protocols_rc=$?
+if [ "$config_protocols_rc" -ne 0 ]; then
+  fail "curl-config --protocols" "$config_protocols_raw"
+  config_protocols=
+else
+  config_protocols="$(printf '%s\n' "$config_protocols_raw" | tr '[:upper:]' '[:lower:]')"
+fi
+version_features="$(printf '%s\n' "$version_output" | sed -n 's/^Features: //p' | tr ' ' '\n')"
+version_protocols="$(printf '%s\n' "$version_output" | sed -n 's/^Protocols: //p' | tr ' ' '\n')"
 
 printf '%s\n\n' "$version_output"
 
@@ -573,21 +653,18 @@ fi
 # libssh and libssh2 provide the same curl protocols but are distinct libraries.
 assert_not_contains "version does not report libssh2" "$version_output" 'libssh2'
 
-# curl-config and curl --version use slightly different formats, so check both.
 for feature in ECH GSS-API HTTP2 HTTP3 HTTPSRR IDN Kerberos PSL SPNEGO SSL brotli zstd; do
-  config_and_version="$config_features
-$version_output"
-  assert_contains "feature $feature enabled" "$config_and_version" "$feature"
+  assert_exact_entry "curl-config feature $feature enabled" "$config_features" "$feature"
+  assert_exact_entry "curl --version feature $feature enabled" "$version_features" "$feature"
 done
 
 for protocol in http https ldap ldaps scp sftp ws wss; do
-  config_and_version="$config_protocols
-$version_output"
-  assert_contains "protocol $protocol enabled" "$config_and_version" "$protocol"
+  assert_exact_entry "curl-config protocol $protocol enabled" "$config_protocols" "$protocol"
+  assert_exact_entry "curl --version protocol $protocol enabled" "$version_protocols" "$protocol"
 done
 
 if target_has_command ldd; then
-  # Linkage checks make sure runtime resolution points at curl-build/prefix
+  # Linkage checks make sure runtime resolution points at the selected prefix
   # instead of compatible libraries accidentally found on the host system.
   ldd_output="$(run_in_target ldd "$CURL_BIN" 2>&1)"
   assert_contains "ldd uses prefix libcurl" "$ldd_output" "$PREFIX_DIR/lib/libcurl.so"
@@ -641,8 +718,8 @@ else
   parallel_pids=
   parallel_logs=
   parallel_count=0
-  # The groups are independent and each retains its detailed assertions. Four
-  # concurrent groups keeps the suite fast without overloading public services.
+  # Independent groups retain their detailed assertions. NETWORK_JOBS limits
+  # concurrency, with up to four groups running at once by default.
   run_parallel_check http network_http_checks
   run_parallel_check compression network_compression_checks
   run_parallel_check ech network_ech_check
