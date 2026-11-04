@@ -5,9 +5,9 @@ set -Eeuo pipefail
 # naming convention expected by their repositories. Every value can be
 # overridden from the environment when testing a newer dependency.
 OPENSSL_VERSION="${OPENSSL_VERSION:-openssl-4.1.0}"
-NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.70.0}"
-NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.18.0}"
-NGTCP2_VERSION="${NGTCP2_VERSION:-v1.25.0}"
+NGHTTP2_VERSION="${NGHTTP2_VERSION:-v1.71.0}"
+NGHTTP3_VERSION="${NGHTTP3_VERSION:-v1.19.0}"
+NGTCP2_VERSION="${NGTCP2_VERSION:-v1.26.0}"
 CURL_VERSION="${CURL_VERSION:-curl-8_23_0}"
 ZLIB_VERSION="${ZLIB_VERSION:-v1.3.2}"
 CARES_VERSION="${CARES_VERSION:-v1.34.9}"
